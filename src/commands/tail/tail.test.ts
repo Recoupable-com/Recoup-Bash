@@ -1,0 +1,109 @@
+import { describe, it, expect } from 'vitest';
+import { BashEnv } from '../../BashEnv.js';
+
+describe('tail', () => {
+  it('should show last 10 lines by default', async () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `line${i + 1}`).join('\n') + '\n';
+    const env = new BashEnv({
+      files: { '/test.txt': lines },
+    });
+    const result = await env.exec('tail /test.txt');
+    expect(result.stdout).not.toContain('line10\n');
+    expect(result.stdout).toContain('line11');
+    expect(result.stdout).toContain('line20');
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('should show specified number of lines with -n', async () => {
+    const env = new BashEnv({
+      files: { '/test.txt': 'a\nb\nc\nd\ne\n' },
+    });
+    const result = await env.exec('tail -n 2 /test.txt');
+    expect(result.stdout).toBe('d\ne\n');
+  });
+
+  it('should show specified number of lines with -n attached', async () => {
+    const env = new BashEnv({
+      files: { '/test.txt': 'a\nb\nc\nd\ne\n' },
+    });
+    const result = await env.exec('tail -n2 /test.txt');
+    expect(result.stdout).toBe('d\ne\n');
+  });
+
+  it('should show specified number of lines with -NUM', async () => {
+    const env = new BashEnv({
+      files: { '/test.txt': 'a\nb\nc\nd\ne\n' },
+    });
+    const result = await env.exec('tail -3 /test.txt');
+    expect(result.stdout).toBe('c\nd\ne\n');
+  });
+
+  it('should handle file with fewer lines than requested', async () => {
+    const env = new BashEnv({
+      files: { '/test.txt': 'a\nb\n' },
+    });
+    const result = await env.exec('tail -n 10 /test.txt');
+    expect(result.stdout).toBe('a\nb\n');
+  });
+
+  it('should show headers for multiple files', async () => {
+    const env = new BashEnv({
+      files: {
+        '/a.txt': 'aaa\n',
+        '/b.txt': 'bbb\n',
+      },
+    });
+    const result = await env.exec('tail /a.txt /b.txt');
+    expect(result.stdout).toContain('==> /a.txt <==');
+    expect(result.stdout).toContain('==> /b.txt <==');
+    expect(result.stdout).toContain('aaa');
+    expect(result.stdout).toContain('bbb');
+  });
+
+  it('should error on missing file', async () => {
+    const env = new BashEnv();
+    const result = await env.exec('tail /missing.txt');
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('cannot open');
+  });
+
+  it('should read from stdin', async () => {
+    const env = new BashEnv();
+    const result = await env.exec('echo -e "a\\nb\\nc\\nd\\ne" | tail -n 2');
+    expect(result.stdout).toContain('d');
+    expect(result.stdout).toContain('e');
+    expect(result.stdout).not.toContain('c\n');
+  });
+
+  it('should handle empty file', async () => {
+    const env = new BashEnv({
+      files: { '/empty.txt': '' },
+    });
+    const result = await env.exec('tail /empty.txt');
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('should handle tail -n 1 with single line', async () => {
+    const env = new BashEnv({
+      files: { '/test.txt': 'only line\n' },
+    });
+    const result = await env.exec('tail -n 1 /test.txt');
+    expect(result.stdout).toBe('only line\n');
+  });
+
+  it('should show last line only with -n 1', async () => {
+    const env = new BashEnv({
+      files: { '/test.txt': 'first\nsecond\nthird\n' },
+    });
+    const result = await env.exec('tail -n 1 /test.txt');
+    expect(result.stdout).toBe('third\n');
+  });
+
+  it('should combine with head for specific line', async () => {
+    const env = new BashEnv({
+      files: { '/test.txt': 'line1\nline2\nline3\nline4\nline5\n' },
+    });
+    const result = await env.exec('cat /test.txt | head -n 3 | tail -n 1');
+    expect(result.stdout).toBe('line3\n');
+  });
+});

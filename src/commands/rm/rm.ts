@@ -1,0 +1,56 @@
+import { Command, CommandContext, ExecResult } from '../../types.js';
+
+export const rmCommand: Command = {
+  name: 'rm',
+
+  async execute(args: string[], ctx: CommandContext): Promise<ExecResult> {
+    let recursive = false;
+    let force = false;
+    const paths: string[] = [];
+
+    // Parse arguments
+    for (const arg of args) {
+      if (arg.startsWith('-') && !arg.startsWith('--')) {
+        for (const flag of arg.slice(1)) {
+          if (flag === 'r' || flag === 'R') recursive = true;
+          else if (flag === 'f') force = true;
+        }
+      } else if (arg === '--recursive') {
+        recursive = true;
+      } else if (arg === '--force') {
+        force = true;
+      } else {
+        paths.push(arg);
+      }
+    }
+
+    if (paths.length === 0) {
+      if (force) {
+        return { stdout: '', stderr: '', exitCode: 0 };
+      }
+      return {
+        stdout: '',
+        stderr: 'rm: missing operand\n',
+        exitCode: 1,
+      };
+    }
+
+    let stderr = '';
+    let exitCode = 0;
+
+    for (const path of paths) {
+      try {
+        const fullPath = ctx.fs.resolvePath(ctx.cwd, path);
+        await ctx.fs.rm(fullPath, { recursive, force });
+      } catch (error) {
+        if (!force) {
+          const message = error instanceof Error ? error.message : String(error);
+          stderr += `rm: cannot remove '${path}': ${message}\n`;
+          exitCode = 1;
+        }
+      }
+    }
+
+    return { stdout: '', stderr, exitCode };
+  },
+};
