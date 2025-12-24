@@ -8,3 +8,4 @@
 - `--help` does not need to pass comparison tests and should reflect actual capability
 - Commands must handle unknown arguments correctly
 - Always ensure all tests pass in the end and there are no compile and lint errors
+- Use `pnpm lint:fix`

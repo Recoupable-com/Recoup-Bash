@@ -1,12 +1,32 @@
 import type { Command, CommandContext, ExecResult } from "../../types.js";
-import { unknownOption } from "../help.js";
+import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
+
+const sortHelp = {
+  name: "sort",
+  summary: "sort lines of text files",
+  usage: "sort [OPTION]... [FILE]...",
+  options: [
+    "-f, --ignore-case    fold lower case to upper case characters",
+    "-n, --numeric-sort   compare according to string numerical value",
+    "-r, --reverse        reverse the result of comparisons",
+    "-u, --unique         output only unique lines",
+    "-k, --key=POS        sort via a key at field POS",
+    "-t, --field-separator=SEP  use SEP as field separator",
+    "    --help           display this help and exit",
+  ],
+};
 
 export const sortCommand: Command = {
   name: "sort",
   async execute(args: string[], ctx: CommandContext): Promise<ExecResult> {
+    if (hasHelpFlag(args)) {
+      return showHelp(sortHelp);
+    }
+
     let reverse = false;
     let numeric = false;
     let unique = false;
+    let ignoreCase = false;
     let keyField: number | null = null;
     let fieldDelimiter: string | null = null;
     const files: string[] = [];
@@ -20,6 +40,8 @@ export const sortCommand: Command = {
         numeric = true;
       } else if (arg === "-u" || arg === "--unique") {
         unique = true;
+      } else if (arg === "-f" || arg === "--ignore-case") {
+        ignoreCase = true;
       } else if (arg === "-t" || arg === "--field-separator") {
         fieldDelimiter = args[++i] || null;
       } else if (arg.startsWith("-t")) {
@@ -45,6 +67,7 @@ export const sortCommand: Command = {
           if (char === "r") reverse = true;
           else if (char === "n") numeric = true;
           else if (char === "u") unique = true;
+          else if (char === "f") ignoreCase = true;
           else return unknownOption("sort", `-${char}`);
         }
       } else {
@@ -94,6 +117,12 @@ export const sortCommand: Command = {
         valB = partsB[keyField - 1] || "";
       }
 
+      // Apply case folding if -f is specified
+      if (ignoreCase) {
+        valA = valA.toLowerCase();
+        valB = valB.toLowerCase();
+      }
+
       if (numeric) {
         const numA = parseFloat(valA) || 0;
         const numB = parseFloat(valB) || 0;
@@ -109,7 +138,18 @@ export const sortCommand: Command = {
 
     // Remove duplicates if -u
     if (unique) {
-      lines = [...new Set(lines)];
+      if (ignoreCase) {
+        // Case-insensitive uniqueness
+        const seen = new Set<string>();
+        lines = lines.filter((line) => {
+          const key = line.toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      } else {
+        lines = [...new Set(lines)];
+      }
     }
 
     const output = lines.length > 0 ? `${lines.join("\n")}\n` : "";

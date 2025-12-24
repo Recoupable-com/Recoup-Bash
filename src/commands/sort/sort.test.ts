@@ -103,4 +103,63 @@ describe("sort command", () => {
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
   });
+
+  describe("-f flag (case-insensitive)", () => {
+    it("should sort case-insensitively with -f", async () => {
+      const env = createEnv();
+      const result = await env.exec("sort -f /test/mixed.txt");
+      // Case-insensitive: alpha/Alpha should be together, zebra/Zebra together
+      // The exact order within same-case groups depends on locale
+      expect(result.stdout).toContain("alpha");
+      expect(result.stdout).toContain("Alpha");
+      expect(result.stdout).toContain("zebra");
+      expect(result.stdout).toContain("Zebra");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("should sort case-insensitively with --ignore-case", async () => {
+      const env = new BashEnv({
+        files: { "/test.txt": "Banana\napple\nCherry\n" },
+      });
+      const result = await env.exec("sort --ignore-case /test.txt");
+      expect(result.stdout).toBe("apple\nBanana\nCherry\n");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("should combine -f with -r for reverse case-insensitive", async () => {
+      const env = new BashEnv({
+        files: { "/test.txt": "apple\nBanana\ncherry\n" },
+      });
+      const result = await env.exec("sort -fr /test.txt");
+      expect(result.stdout).toBe("cherry\nBanana\napple\n");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("should combine -f with -u for unique case-insensitive", async () => {
+      const env = new BashEnv({
+        files: { "/test.txt": "Apple\napple\nBanana\nbanana\n" },
+      });
+      const result = await env.exec("sort -fu /test.txt");
+      // Should have 2 unique entries (case-folded)
+      const lines = result.stdout.trim().split("\n");
+      expect(lines.length).toBe(2);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("should work with -k field and -f", async () => {
+      const env = new BashEnv({
+        files: { "/test.txt": "1 Zebra\n2 apple\n3 BANANA\n" },
+      });
+      const result = await env.exec("sort -f -k2 /test.txt");
+      expect(result.stdout).toBe("2 apple\n3 BANANA\n1 Zebra\n");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("should show help with --help", async () => {
+      const env = new BashEnv();
+      const result = await env.exec("sort --help");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("--ignore-case");
+    });
+  });
 });

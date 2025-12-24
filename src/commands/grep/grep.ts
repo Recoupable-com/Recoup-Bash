@@ -13,6 +13,7 @@ const grepHelp = {
     "-w, --word-regexp        match only whole words",
     "-c, --count              print only a count of matching lines",
     "-l, --files-with-matches print only names of files with matches",
+    "-L, --files-without-match print names of files with no matches",
     "-n, --line-number        print line number with output lines",
     "-h, --no-filename        suppress the file name prefix on output",
     "-o, --only-matching      show only nonempty parts of lines that match",
@@ -23,6 +24,8 @@ const grepHelp = {
     "-C NUM                   print NUM lines of context",
     "-e PATTERN               use PATTERN for matching",
     "    --include=GLOB       search only files matching GLOB",
+    "    --exclude=GLOB       skip files matching GLOB",
+    "    --exclude-dir=DIR    skip directories matching DIR",
     "    --help               display this help and exit",
   ],
 };
@@ -40,6 +43,7 @@ export const grepCommand: Command = {
     let invertMatch = false;
     let countOnly = false;
     let filesWithMatches = false;
+    let filesWithoutMatch = false;
     let recursive = false;
     let wholeWord = false;
     let extendedRegex = false;
@@ -50,6 +54,8 @@ export const grepCommand: Command = {
     let beforeContext = 0;
     let afterContext = 0;
     const includePatterns: string[] = [];
+    const excludePatterns: string[] = [];
+    const excludeDirPatterns: string[] = [];
     let pattern: string | null = null;
     const files: string[] = [];
 
@@ -66,6 +72,18 @@ export const grepCommand: Command = {
         // Handle --include=pattern (can be specified multiple times)
         if (arg.startsWith("--include=")) {
           includePatterns.push(arg.slice("--include=".length));
+          continue;
+        }
+
+        // Handle --exclude=pattern (can be specified multiple times)
+        if (arg.startsWith("--exclude=")) {
+          excludePatterns.push(arg.slice("--exclude=".length));
+          continue;
+        }
+
+        // Handle --exclude-dir=pattern (can be specified multiple times)
+        if (arg.startsWith("--exclude-dir=")) {
+          excludeDirPatterns.push(arg.slice("--exclude-dir=".length));
           continue;
         }
 
@@ -108,6 +126,8 @@ export const grepCommand: Command = {
           else if (flag === "c" || flag === "--count") countOnly = true;
           else if (flag === "l" || flag === "--files-with-matches")
             filesWithMatches = true;
+          else if (flag === "L" || flag === "--files-without-match")
+            filesWithoutMatch = true;
           else if (flag === "r" || flag === "R" || flag === "--recursive")
             recursive = true;
           else if (flag === "w" || flag === "--word-regexp") wholeWord = true;
@@ -214,6 +234,8 @@ export const grepCommand: Command = {
               f,
               ctx,
               includePatterns,
+              excludePatterns,
+              excludeDirPatterns,
             );
             filesToSearch.push(...recursiveExpanded);
           }
@@ -221,7 +243,13 @@ export const grepCommand: Command = {
           filesToSearch.push(...expanded);
         }
       } else if (recursive) {
-        const expanded = await expandRecursive(file, ctx, includePatterns);
+        const expanded = await expandRecursive(
+          file,
+          ctx,
+          includePatterns,
+          excludePatterns,
+          excludeDirPatterns,
+        );
         filesToSearch.push(...expanded);
       } else {
         filesToSearch.push(file);
@@ -232,9 +260,17 @@ export const grepCommand: Command = {
     const showFilename = (filesToSearch.length > 1 || recursive) && !noFilename;
 
     for (const file of filesToSearch) {
+      const basename = file.split("/").pop() || file;
+
+      // Check exclude patterns for non-recursive case
+      if (excludePatterns.length > 0 && !recursive) {
+        if (excludePatterns.some((p) => matchGlob(basename, p))) {
+          continue;
+        }
+      }
+
       // Check include patterns for non-recursive case
       if (includePatterns.length > 0 && !recursive) {
-        const basename = file.split("/").pop() || file;
         if (!includePatterns.some((p) => matchGlob(basename, p))) {
           continue;
         }
@@ -272,11 +308,16 @@ export const grepCommand: Command = {
           }
           if (filesWithMatches) {
             stdout += `${file}\n`;
-          } else {
+          } else if (!filesWithoutMatch) {
             stdout += result.output;
           }
-        } else if (countOnly && !filesWithMatches) {
-          stdout += result.output;
+        } else {
+          // No match in this file
+          if (filesWithoutMatch) {
+            stdout += `${file}\n`;
+          } else if (countOnly && !filesWithMatches) {
+            stdout += result.output;
+          }
         }
       } catch {
         stderr += `grep: ${file}: No such file or directory\n`;
@@ -284,8 +325,16 @@ export const grepCommand: Command = {
       }
     }
 
-    // Exit codes: 0 = match found, 1 = no match, 2 = error
-    const exitCode = anyError ? 2 : anyMatch ? 0 : 1;
+    // Exit codes: 0 = match found (or files without match for -L), 1 = no match, 2 = error
+    // For -L, success means we found files without matches (stdout has content)
+    let exitCode: number;
+    if (anyError) {
+      exitCode = 2;
+    } else if (filesWithoutMatch) {
+      exitCode = stdout.length > 0 ? 0 : 1;
+    } else {
+      exitCode = anyMatch ? 0 : 1;
+    }
 
     if (quietMode) {
       return { stdout: "", stderr: "", exitCode };
@@ -469,6 +518,8 @@ async function expandRecursive(
   path: string,
   ctx: CommandContext,
   includePatterns: string[] = [],
+  excludePatterns: string[] = [],
+  excludeDirPatterns: string[] = [],
 ): Promise<string[]> {
   const fullPath = ctx.fs.resolvePath(ctx.cwd, path);
   const result: string[] = [];
@@ -477,9 +528,17 @@ async function expandRecursive(
     const stat = await ctx.fs.stat(fullPath);
 
     if (!stat.isDirectory) {
+      const basename = path.split("/").pop() || path;
+
+      // Check exclude patterns - skip if file matches any exclude pattern
+      if (excludePatterns.length > 0) {
+        if (excludePatterns.some((p) => matchGlob(basename, p))) {
+          return [];
+        }
+      }
+
       // Check include patterns - file must match at least one pattern (if any are specified)
       if (includePatterns.length > 0) {
-        const basename = path.split("/").pop() || path;
         if (!includePatterns.some((p) => matchGlob(basename, p))) {
           return [];
         }
@@ -487,12 +546,26 @@ async function expandRecursive(
       return [path];
     }
 
+    // Check if directory should be excluded
+    const dirName = path.split("/").pop() || path;
+    if (excludeDirPatterns.length > 0) {
+      if (excludeDirPatterns.some((p) => matchGlob(dirName, p))) {
+        return [];
+      }
+    }
+
     const entries = await ctx.fs.readdir(fullPath);
     for (const entry of entries) {
       if (entry.startsWith(".")) continue; // Skip hidden files
 
       const entryPath = path === "." ? entry : `${path}/${entry}`;
-      const expanded = await expandRecursive(entryPath, ctx, includePatterns);
+      const expanded = await expandRecursive(
+        entryPath,
+        ctx,
+        includePatterns,
+        excludePatterns,
+        excludeDirPatterns,
+      );
       result.push(...expanded);
     }
   } catch {

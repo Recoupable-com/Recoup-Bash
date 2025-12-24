@@ -17,6 +17,8 @@ const findHelp = {
     "-not, !          negate the following expression",
     "-a, -and         logical AND (default)",
     "-o, -or          logical OR",
+    "-exec CMD {} ;   execute CMD on each file ({} is replaced by filename)",
+    "-exec CMD {} +   execute CMD with multiple files at once",
     "    --help       display this help and exit",
   ],
 };
@@ -77,16 +79,28 @@ const _PREDICATES_NO_ARGS = new Set([
   "-or",
 ]);
 
+// Exec action types
+interface ExecAction {
+  command: string[];
+  batchMode: boolean; // true for -exec ... +, false for -exec ... ;
+}
+
 function parseExpressions(
   args: string[],
   startIndex: number,
-): { expr: Expression | null; pathIndex: number; error?: string } {
+): {
+  expr: Expression | null;
+  pathIndex: number;
+  error?: string;
+  execActions: ExecAction[];
+} {
   // Parse into tokens: expressions, operators, and negations
   type Token =
     | { type: "expr"; expr: Expression }
     | { type: "op"; op: "and" | "or" }
     | { type: "not" };
   const tokens: Token[] = [];
+  const execActions: ExecAction[] = [];
   let i = startIndex;
 
   while (i < args.length) {
@@ -115,6 +129,7 @@ function parseExpressions(
           expr: null,
           pathIndex: i,
           error: `find: Unknown argument to -type: ${fileType}\n`,
+          execActions: [],
         };
       }
     } else if (arg === "-empty") {
@@ -128,12 +143,31 @@ function parseExpressions(
     } else if (arg === "-maxdepth" || arg === "-mindepth") {
       // These are handled separately, skip them
       i++;
+    } else if (arg === "-exec") {
+      // Parse -exec command {} ; or -exec command {} +
+      const commandParts: string[] = [];
+      i++;
+      while (i < args.length && args[i] !== ";" && args[i] !== "+") {
+        commandParts.push(args[i]);
+        i++;
+      }
+      if (i >= args.length) {
+        return {
+          expr: null,
+          pathIndex: i,
+          error: "find: missing argument to `-exec'\n",
+          execActions: [],
+        };
+      }
+      const batchMode = args[i] === "+";
+      execActions.push({ command: commandParts, batchMode });
     } else if (arg.startsWith("-")) {
       // Unknown predicate
       return {
         expr: null,
         pathIndex: i,
         error: `find: unknown predicate '${arg}'\n`,
+        execActions: [],
       };
     } else {
       // This is the path - skip if at start, otherwise stop
@@ -147,7 +181,7 @@ function parseExpressions(
   }
 
   if (tokens.length === 0) {
-    return { expr: null, pathIndex: i };
+    return { expr: null, pathIndex: i, execActions };
   }
 
   // Process NOT operators - they bind to the immediately following expression
@@ -199,7 +233,7 @@ function parseExpressions(
   }
 
   if (andResults.length === 0) {
-    return { expr: null, pathIndex: i };
+    return { expr: null, pathIndex: i, execActions };
   }
 
   // Combine AND results with OR
@@ -208,7 +242,7 @@ function parseExpressions(
     result = { type: "or", left: result, right: andResults[j] };
   }
 
-  return { expr: result, pathIndex: i };
+  return { expr: result, pathIndex: i, execActions };
 }
 
 interface EvalContext {
@@ -264,7 +298,14 @@ export const findCommand: Command = {
         maxDepth = parseInt(args[++i], 10);
       } else if (arg === "-mindepth" && i + 1 < args.length) {
         minDepth = parseInt(args[++i], 10);
-      } else if (!arg.startsWith("-")) {
+      } else if (arg === "-exec") {
+        // Skip -exec and all arguments until terminator (; or +)
+        i++;
+        while (i < args.length && args[i] !== ";" && args[i] !== "+") {
+          i++;
+        }
+        // i now points to the terminator, loop will increment past it
+      } else if (!arg.startsWith("-") && arg !== ";" && arg !== "+") {
         searchPath = arg;
       } else if (PREDICATES_WITH_ARGS.has(arg)) {
         // Skip value arguments for predicates that take arguments
@@ -273,12 +314,15 @@ export const findCommand: Command = {
     }
 
     // Parse expressions
-    const { expr, error } = parseExpressions(args, 0);
+    const { expr, error, execActions } = parseExpressions(args, 0);
 
     // Return error for unknown predicates
     if (error) {
       return { stdout: "", stderr: error, exitCode: 1 };
     }
+
+    // Determine if we should print results (default) or just execute commands
+    const shouldPrint = execActions.length === 0;
 
     const basePath = ctx.fs.resolvePath(ctx.cwd, searchPath);
 
@@ -373,8 +417,59 @@ export const findCommand: Command = {
 
     await findRecursive(basePath, 0);
 
-    // Don't sort - real find uses filesystem traversal order
-    const output = results.length > 0 ? `${results.join("\n")}\n` : "";
-    return { stdout: output, stderr: "", exitCode: 0 };
+    let stdout = "";
+    let stderr = "";
+    let exitCode = 0;
+
+    // Execute -exec actions if any
+    if (execActions.length > 0 && results.length > 0) {
+      if (!ctx.exec) {
+        return {
+          stdout: "",
+          stderr: "find: -exec not supported in this context\n",
+          exitCode: 1,
+        };
+      }
+      for (const action of execActions) {
+        if (action.batchMode) {
+          // -exec ... + : execute command once with all files
+          // Replace {} with all file paths
+          const cmdWithFiles: string[] = [];
+          for (const part of action.command) {
+            if (part === "{}") {
+              cmdWithFiles.push(...results);
+            } else {
+              cmdWithFiles.push(part);
+            }
+          }
+          const cmd = cmdWithFiles.map((p) => `"${p}"`).join(" ");
+          const result = await ctx.exec(cmd);
+          stdout += result.stdout;
+          stderr += result.stderr;
+          if (result.exitCode !== 0) {
+            exitCode = result.exitCode;
+          }
+        } else {
+          // -exec ... ; : execute command for each file
+          for (const file of results) {
+            const cmdWithFile = action.command.map((part) =>
+              part === "{}" ? file : part,
+            );
+            const cmd = cmdWithFile.map((p) => `"${p}"`).join(" ");
+            const result = await ctx.exec(cmd);
+            stdout += result.stdout;
+            stderr += result.stderr;
+            if (result.exitCode !== 0) {
+              exitCode = result.exitCode;
+            }
+          }
+        }
+      }
+    } else if (shouldPrint) {
+      // Don't sort - real find uses filesystem traversal order
+      stdout = results.length > 0 ? `${results.join("\n")}\n` : "";
+    }
+
+    return { stdout, stderr, exitCode };
   },
 };

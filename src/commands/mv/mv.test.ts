@@ -141,4 +141,102 @@ describe("mv", () => {
     const content = await env.readFile("/dst/src/file.txt");
     expect(content).toBe("content");
   });
+
+  describe("flags", () => {
+    it("should accept -f flag (force)", async () => {
+      const env = new BashEnv({
+        files: {
+          "/src.txt": "new",
+          "/dst.txt": "old",
+        },
+      });
+      const result = await env.exec("mv -f /src.txt /dst.txt");
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      const content = await env.readFile("/dst.txt");
+      expect(content).toBe("new");
+    });
+
+    it("should skip existing file with -n flag (no-clobber)", async () => {
+      const env = new BashEnv({
+        files: {
+          "/src.txt": "new",
+          "/dst.txt": "old",
+        },
+      });
+      const result = await env.exec("mv -n /src.txt /dst.txt");
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      // Source should still exist since move was skipped
+      const srcExists = await env.exec("cat /src.txt");
+      expect(srcExists.exitCode).toBe(0);
+      // Destination should be unchanged
+      const content = await env.readFile("/dst.txt");
+      expect(content).toBe("old");
+    });
+
+    it("should move when destination doesn't exist with -n flag", async () => {
+      const env = new BashEnv({
+        files: { "/src.txt": "content" },
+      });
+      const result = await env.exec("mv -n /src.txt /dst.txt");
+      expect(result.exitCode).toBe(0);
+      const content = await env.readFile("/dst.txt");
+      expect(content).toBe("content");
+    });
+
+    it("should show verbose output with -v flag", async () => {
+      const env = new BashEnv({
+        files: { "/old.txt": "content" },
+      });
+      const result = await env.exec("mv -v /old.txt /new.txt");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("renamed '/old.txt' -> '/new.txt'\n");
+    });
+
+    it("should handle combined flags -fv", async () => {
+      const env = new BashEnv({
+        files: {
+          "/src.txt": "new",
+          "/dst.txt": "old",
+        },
+      });
+      const result = await env.exec("mv -fv /src.txt /dst.txt");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("renamed '/src.txt' -> '/dst.txt'\n");
+    });
+
+    it("should let -n take precedence over -f", async () => {
+      const env = new BashEnv({
+        files: {
+          "/src.txt": "new",
+          "/dst.txt": "old",
+        },
+      });
+      const result = await env.exec("mv -fn /src.txt /dst.txt");
+      expect(result.exitCode).toBe(0);
+      // Source should still exist (no-clobber took precedence)
+      const srcContent = await env.readFile("/src.txt");
+      expect(srcContent).toBe("new");
+    });
+
+    it("should show help with --help", async () => {
+      const env = new BashEnv();
+      const result = await env.exec("mv --help");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("mv");
+      expect(result.stdout).toContain("--force");
+      expect(result.stdout).toContain("--no-clobber");
+      expect(result.stdout).toContain("--verbose");
+    });
+
+    it("should error on unknown flag", async () => {
+      const env = new BashEnv({
+        files: { "/src.txt": "content" },
+      });
+      const result = await env.exec("mv -x /src.txt /dst.txt");
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("invalid option");
+    });
+  });
 });
