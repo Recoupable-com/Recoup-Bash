@@ -1,8 +1,10 @@
 export {
   Command,
-  CommandFinished,
-  type OutputMessage,
   Sandbox,
-  type SandboxOptions,
-  type WriteFilesInput,
+} from "./Sandbox.js";
+export type {
+  CommandFinished,
+  OutputMessage,
+  SandboxOptions,
+  WriteFilesInput,
 } from "./Sandbox.js";

@@ -1,4 +1,5 @@
-export { BashEnv, BashEnvOptions } from "./BashEnv.js";
+export { BashEnv } from "./BashEnv.js";
+export type { BashEnvOptions } from "./BashEnv.js";
 export { VirtualFs } from "./fs.js";
 export type {
   BufferEncoding,
@@ -16,12 +17,11 @@ export type {
   SymlinkEntry,
 } from "./fs-interface.js";
 // Vercel Sandbox API compatible exports
-export {
-  Command as SandboxCommand,
-  type CommandFinished as SandboxCommandFinished,
-  type OutputMessage,
-  Sandbox,
-  type SandboxOptions,
-  type WriteFilesInput,
+export { Command as SandboxCommand, Sandbox } from "./sandbox/index.js";
+export type {
+  CommandFinished as SandboxCommandFinished,
+  OutputMessage,
+  SandboxOptions,
+  WriteFilesInput,
 } from "./sandbox/index.js";
-export { Command, CommandContext, ExecResult, IFileSystem } from "./types.js";
+export type { Command, CommandContext, ExecResult, IFileSystem } from "./types.js";

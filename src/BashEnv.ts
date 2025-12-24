@@ -2,6 +2,26 @@ import { createLazyCommands } from "./commands/registry.js";
 import { type IFileSystem, VirtualFs } from "./fs.js";
 import type { InitialFiles } from "./fs-interface.js";
 import {
+  executeIfStatement,
+  executeForLoop,
+  executeWhileLoop,
+  executeUntilLoop,
+  executeCaseStatement,
+  evaluateTopLevelTest,
+  executeWithHereDoc,
+  expandVariablesAsync,
+  handleCd,
+  handleExport,
+  handleUnset,
+  handleLocal,
+  handleExit,
+  handleVariableAssignment,
+  handleTestExpression,
+  type InterpreterContext,
+  type HereDocContext,
+  type BuiltinContext,
+} from "./interpreter/index.js";
+import {
   GlobExpander,
   type Pipeline,
   type Redirection,
@@ -164,36 +184,101 @@ export class BashEnv {
       return { stdout: "", stderr: "", exitCode: 0 };
     }
 
+    // Normalize: strip leading whitespace from each line
+    // This handles indented multi-line scripts like template literals
+    const normalizedLines = commandLine
+      .split("\n")
+      .map((line) => line.trimStart());
+    const normalized = normalizedLines.join("\n");
+
+    // Split into statements and execute sequentially
+    // This allows control structures to appear in multi-line scripts
+    const statements = this.splitIntoStatements(normalized);
+    if (statements.length > 1) {
+      let stdout = "";
+      let stderr = "";
+      let exitCode = 0;
+      for (const statement of statements) {
+        const result = await this.exec(statement);
+        stdout += result.stdout;
+        stderr += result.stderr;
+        exitCode = result.exitCode;
+      }
+      return { stdout, stderr, exitCode };
+    }
+
     // Check for if statements
-    const trimmed = commandLine.trim();
+    const trimmed = normalized.trim();
     if (
       trimmed.startsWith("if ") ||
       trimmed.startsWith("if;") ||
       trimmed === "if"
     ) {
-      return this.executeIfStatement(trimmed);
+      return executeIfStatement(trimmed, this.getInterpreterContext());
     }
 
     // Check for for loops
     if (trimmed.startsWith("for ")) {
-      return this.executeForLoop(trimmed);
+      return executeForLoop(trimmed, this.getInterpreterContext());
     }
 
     // Check for while loops
     if (trimmed.startsWith("while ")) {
-      return this.executeWhileLoop(trimmed);
+      return executeWhileLoop(trimmed, this.getInterpreterContext());
     }
 
     // Check for until loops
     if (trimmed.startsWith("until ")) {
-      return this.executeUntilLoop(trimmed);
+      return executeUntilLoop(trimmed, this.getInterpreterContext());
     }
 
-    // Check for function definitions
-    const funcDef = this.parseFunctionDefinition(trimmed);
+    // Check for case statements
+    if (trimmed.startsWith("case ")) {
+      return executeCaseStatement(trimmed, this.getInterpreterContext());
+    }
+
+    // Check for [[ ]] test expressions at top level
+    if (trimmed.startsWith("[[ ")) {
+      return evaluateTopLevelTest(trimmed, this.getInterpreterContext());
+    }
+
+    // Check for function definitions BEFORE here documents
+    // (function bodies may contain here documents)
+    const funcDef = this.extractFunctionDefinition(trimmed);
     if (funcDef) {
       this.functions.set(funcDef.name, funcDef.body);
+      // If there's code after the function definition, execute it
+      if (funcDef.rest) {
+        return this.exec(funcDef.rest);
+      }
       return { stdout: "", stderr: "", exitCode: 0 };
+    }
+
+    // Check for here documents
+    if (trimmed.includes("<<")) {
+      // Find where << appears (not inside quotes)
+      const hereDocIndex = this.findHereDocIndex(trimmed);
+      if (hereDocIndex !== -1) {
+        // Check if there are commands before the here document (separated by semicolon)
+        const beforeHereDoc = trimmed.slice(0, hereDocIndex);
+        const lastSemicolon = beforeHereDoc.lastIndexOf(";");
+        if (lastSemicolon !== -1) {
+          // Execute commands before the here doc first
+          const preCommands = trimmed.slice(0, lastSemicolon).trim();
+          const hereDocPart = trimmed.slice(lastSemicolon + 1).trim();
+          const preResult = await this.exec(preCommands);
+          const hereDocResult = await executeWithHereDoc(
+            hereDocPart,
+            this.getHereDocContext(),
+          );
+          return {
+            stdout: preResult.stdout + hereDocResult.stdout,
+            stderr: preResult.stderr + hereDocResult.stderr,
+            exitCode: hereDocResult.exitCode,
+          };
+        }
+        return executeWithHereDoc(trimmed, this.getHereDocContext());
+      }
     }
 
     // Update parser with current environment
@@ -216,414 +301,287 @@ export class BashEnv {
   }
 
   /**
-   * Parse and execute an if statement
-   * Syntax: if CONDITION; then COMMANDS; [elif CONDITION; then COMMANDS;]... [else COMMANDS;] fi
+   * Get interpreter context for control flow and other modules
    */
-  private async executeIfStatement(input: string): Promise<ExecResult> {
-    // Parse the if statement structure
-    const parsed = this.parseIfStatement(input);
-    if (parsed.error) {
-      return { stdout: "", stderr: parsed.error, exitCode: 2 };
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let exitCode = 0;
-
-    // Evaluate conditions in order
-    for (const branch of parsed.branches) {
-      if (branch.condition === null) {
-        // This is the else branch - execute it
-        const result = await this.exec(branch.body);
-        stdout += result.stdout;
-        stderr += result.stderr;
-        exitCode = result.exitCode;
-        break;
-      }
-
-      // Evaluate the condition
-      const condResult = await this.exec(branch.condition);
-      if (condResult.exitCode === 0) {
-        // Condition is true, execute the body
-        const result = await this.exec(branch.body);
-        stdout += result.stdout;
-        stderr += result.stderr;
-        exitCode = result.exitCode;
-        break;
-      }
-    }
-
-    return { stdout, stderr, exitCode };
+  private getInterpreterContext(): InterpreterContext {
+    return {
+      fs: this.fs,
+      cwd: this.cwd,
+      env: this.env,
+      exec: this.exec.bind(this),
+      expandVariables: (str: string) =>
+        expandVariablesAsync(str, {
+          env: this.env,
+          exec: this.exec.bind(this),
+        }),
+      resolvePath: this.resolvePath.bind(this),
+      maxLoopIterations: this.maxLoopIterations,
+    };
   }
 
   /**
-   * Parse if statement into structured form
+   * Get here document context
    */
-  private parseIfStatement(input: string): {
-    branches: { condition: string | null; body: string }[];
-    error?: string;
-  } {
-    const branches: { condition: string | null; body: string }[] = [];
+  private getHereDocContext(): HereDocContext {
+    return {
+      ...this.getInterpreterContext(),
+      parse: (cmd: string) => {
+        this.parser.setEnv(this.env);
+        return this.parser.parse(cmd);
+      },
+      executePipeline: this.executePipeline.bind(this),
+    };
+  }
 
-    // Tokenize preserving structure
-    let rest = input.trim();
+  /**
+   * Get builtin command context
+   */
+  private getBuiltinContext(): BuiltinContext {
+    return {
+      fs: this.fs,
+      cwd: this.cwd,
+      setCwd: (cwd: string) => {
+        this.cwd = cwd;
+      },
+      previousDir: this.previousDir,
+      setPreviousDir: (dir: string) => {
+        this.previousDir = dir;
+      },
+      env: this.env,
+      localScopes: this.localScopes,
+      resolvePath: this.resolvePath.bind(this),
+    };
+  }
 
-    // Must start with 'if'
-    if (!rest.startsWith("if ") && !rest.startsWith("if;")) {
-      return {
-        branches: [],
-        error: "bash: syntax error near unexpected token\n",
-      };
+  /**
+   * Split input into separate statements, keeping control structures intact
+   * Handles: case...esac, if...fi, for/while/until...done, functions, here documents
+   */
+  private splitIntoStatements(input: string): string[] {
+    const statements: string[] = [];
+    const lines = input.split("\n");
+    let current: string[] = [];
+    let depth = 0;
+    let inControlStructure: "case" | "if" | "loop" | "function" | null = null;
+    let hereDocDelimiter: string | null = null;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) {
+        if (current.length > 0) {
+          current.push("");
+        }
+        continue;
+      }
+
+      // If we're inside a here document, check for the end delimiter
+      if (hereDocDelimiter) {
+        current.push(line);
+        if (line === hereDocDelimiter) {
+          // End of here document - save it
+          statements.push(current.join("\n"));
+          current = [];
+          hereDocDelimiter = null;
+        }
+        continue;
+      }
+
+      // Check for here document start (but only if not in a control structure)
+      const hereDocMatch = line.match(/<<(-?)(['"]?)(\w+)\2/);
+      if (hereDocMatch && depth === 0) {
+        // If there are pending lines that don't contain << , flush them first
+        if (current.length > 0) {
+          const lastLine = current[current.length - 1];
+          if (!lastLine.includes("<<")) {
+            // Flush all previous lines as a statement
+            statements.push(current.join("\n"));
+            current = [];
+          }
+        }
+        hereDocDelimiter = hereDocMatch[3];
+        current.push(line);
+        continue;
+      }
+
+      // Check for start of control structures
+      let justStartedStructure = false;
+      if (depth === 0) {
+        if (line.startsWith("case ") && line.includes(" in")) {
+          inControlStructure = "case";
+          depth = 1;
+          justStartedStructure = true;
+        } else if (
+          line.startsWith("if ") ||
+          line.startsWith("if;") ||
+          line === "if"
+        ) {
+          inControlStructure = "if";
+          depth = 1;
+          justStartedStructure = true;
+        } else if (
+          line.startsWith("for ") ||
+          line.startsWith("while ") ||
+          line.startsWith("until ")
+        ) {
+          inControlStructure = "loop";
+          depth = 1;
+          justStartedStructure = true;
+        } else if (line.match(/^(function\s+\w+|\w+\s*\(\s*\))\s*\{/)) {
+          inControlStructure = "function";
+          depth = 1;
+          justStartedStructure = true;
+        }
+
+        // If we started a control structure, flush any pending current lines first
+        if (inControlStructure && current.length > 0) {
+          statements.push(current.join("\n"));
+          current = [];
+        }
+      }
+
+      // Track nested structures (but not for the line that just started one)
+      if (depth > 0 && !justStartedStructure) {
+        // Check for nested structures
+        if (line.startsWith("case ") && line.includes(" in")) {
+          depth++;
+        } else if (
+          line.startsWith("if ") ||
+          line.startsWith("if;") ||
+          line === "if"
+        ) {
+          depth++;
+        } else if (
+          line.startsWith("for ") ||
+          line.startsWith("while ") ||
+          line.startsWith("until ")
+        ) {
+          depth++;
+        }
+
+        // Check for end markers
+        if (
+          line === "esac" ||
+          line.startsWith("esac;") ||
+          line.startsWith("esac ") ||
+          line.match(/^esac(\s|;|$)/)
+        ) {
+          depth--;
+        } else if (
+          line === "fi" ||
+          line.startsWith("fi;") ||
+          line.startsWith("fi ") ||
+          line.match(/^fi(\s|;|$)/)
+        ) {
+          depth--;
+        } else if (
+          line === "done" ||
+          line.startsWith("done;") ||
+          line.startsWith("done ") ||
+          line.match(/^done(\s|;|$)/)
+        ) {
+          depth--;
+        } else if (line === "}" || line.startsWith("};")) {
+          if (inControlStructure === "function") {
+            depth--;
+          }
+        }
+      }
+
+      current.push(line);
+
+      // If we've finished a control structure, save it
+      if (depth === 0 && inControlStructure) {
+        statements.push(current.join("\n"));
+        current = [];
+        inControlStructure = null;
+      }
     }
-    rest = rest.slice(2).trim();
 
-    // Parse: CONDITION; then BODY [elif CONDITION; then BODY]* [else BODY] fi
+    // Add any remaining lines
+    if (current.length > 0) {
+      const remaining = current.join("\n").trim();
+      if (remaining) {
+        statements.push(remaining);
+      }
+    }
+
+    return statements;
+  }
+
+  /**
+   * Find the index of << in the string, ignoring quoted occurrences
+   */
+  private findHereDocIndex(input: string): number {
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+    for (let i = 0; i < input.length - 1; i++) {
+      const char = input[i];
+      if (char === "'" && !inDoubleQuote) {
+        inSingleQuote = !inSingleQuote;
+      } else if (char === '"' && !inSingleQuote) {
+        inDoubleQuote = !inDoubleQuote;
+      } else if (
+        char === "<" &&
+        input[i + 1] === "<" &&
+        !inSingleQuote &&
+        !inDoubleQuote
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Parse and extract function definitions from input
+   * Returns the function (if found) and any remaining code after it
+   * Syntax: function name { commands; } or name() { commands; }
+   */
+  private extractFunctionDefinition(
+    input: string,
+  ): { name: string; body: string; rest: string } | null {
+    // Match: function name { or name() {
+    const funcStart = input.match(
+      /^(function\s+([a-zA-Z_][a-zA-Z0-9_]*)|([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*\))\s*\{/,
+    );
+    if (!funcStart) {
+      return null;
+    }
+
+    const name = funcStart[2] || funcStart[3];
+    const braceStart = input.indexOf("{", funcStart[0].length - 1);
+
+    // Find the matching closing brace
     let depth = 1;
-    let pos = 0;
-    let state: "condition" | "body" = "condition";
-    let currentCondition = "";
-    let currentBody = "";
-
-    while (pos < rest.length && depth > 0) {
-      // Check for nested if
-      if (rest.slice(pos).match(/^if\s/)) {
-        if (state === "condition") {
-          currentCondition += "if ";
-        } else {
-          currentBody += "if ";
-        }
-        pos += 3;
+    let i = braceStart + 1;
+    while (i < input.length && depth > 0) {
+      if (input[i] === "{") {
         depth++;
-        continue;
-      }
-
-      // Check for fi
-      if (rest.slice(pos).match(/^fi(\s|;|$)/)) {
+      } else if (input[i] === "}") {
         depth--;
-        if (depth === 0) {
-          // End of our if statement
-          if (state === "body") {
-            branches.push({
-              condition: currentCondition.trim() || null,
-              body: currentBody.trim(),
-            });
-          }
-          break;
-        } else {
-          if (state === "condition") {
-            currentCondition += "fi";
+      } else if (input[i] === "'" || input[i] === '"') {
+        // Skip quoted strings
+        const quote = input[i];
+        i++;
+        while (i < input.length && input[i] !== quote) {
+          if (input[i] === "\\" && i + 1 < input.length) {
+            i += 2;
           } else {
-            currentBody += "fi";
+            i++;
           }
-          pos += 2;
-          continue;
         }
       }
-
-      // Check for 'then' (only at depth 1)
-      if (depth === 1 && rest.slice(pos).match(/^then(\s|;|$)/)) {
-        state = "body";
-        pos += 4;
-        // Skip semicolon/whitespace
-        while (pos < rest.length && (rest[pos] === ";" || rest[pos] === " "))
-          pos++;
-        continue;
-      }
-
-      // Check for 'elif' (only at depth 1)
-      if (depth === 1 && rest.slice(pos).match(/^elif\s/)) {
-        // Save current branch
-        if (currentCondition.trim() || currentBody.trim()) {
-          branches.push({
-            condition: currentCondition.trim(),
-            body: currentBody.trim(),
-          });
-        }
-        currentCondition = "";
-        currentBody = "";
-        state = "condition";
-        pos += 5;
-        continue;
-      }
-
-      // Check for 'else' (only at depth 1)
-      if (depth === 1 && rest.slice(pos).match(/^else(\s|;|$)/)) {
-        // Save current branch
-        if (currentCondition.trim() || currentBody.trim()) {
-          branches.push({
-            condition: currentCondition.trim(),
-            body: currentBody.trim(),
-          });
-        }
-        currentCondition = "";
-        currentBody = "";
-        // else has no condition
-        state = "body";
-        pos += 4;
-        // Skip semicolon/whitespace
-        while (pos < rest.length && (rest[pos] === ";" || rest[pos] === " "))
-          pos++;
-        // Mark this as else branch (no condition)
-        currentCondition = "";
-        continue;
-      }
-
-      // Regular character
-      if (state === "condition") {
-        // Handle semicolon before 'then'
-        if (rest[pos] === ";") {
-          pos++;
-          // Skip whitespace
-          while (pos < rest.length && rest[pos] === " ") pos++;
-          continue;
-        }
-        currentCondition += rest[pos];
-      } else {
-        currentBody += rest[pos];
-      }
-      pos++;
-    }
-
-    // Handle 'else' branch specially
-    if (branches.length > 0 && branches[branches.length - 1].condition === "") {
-      branches[branches.length - 1].condition = null;
+      i++;
     }
 
     if (depth !== 0) {
-      return {
-        branches: [],
-        error: "bash: syntax error: unexpected end of file\n",
-      };
+      return null; // Unbalanced braces
     }
 
-    if (branches.length === 0) {
-      return {
-        branches: [],
-        error: "bash: syntax error near unexpected token\n",
-      };
-    }
+    const body = input.slice(braceStart + 1, i - 1).trim();
+    const rest = input.slice(i).trim();
 
-    return { branches };
-  }
-
-  /**
-   * Parse a function definition
-   * Syntax: function name { commands; } or name() { commands; }
-   */
-  private parseFunctionDefinition(
-    input: string,
-  ): { name: string; body: string } | null {
-    // Match: function name { ... }
-    const funcKeywordMatch = input.match(
-      /^function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\{(.*)\}\s*$/s,
-    );
-    if (funcKeywordMatch) {
-      return { name: funcKeywordMatch[1], body: funcKeywordMatch[2].trim() };
-    }
-
-    // Match: name() { ... }
-    const parenMatch = input.match(
-      /^([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*\)\s*\{(.*)\}\s*$/s,
-    );
-    if (parenMatch) {
-      return { name: parenMatch[1], body: parenMatch[2].trim() };
-    }
-
-    return null;
-  }
-
-  /**
-   * Execute a for loop
-   * Syntax: for VAR in LIST; do COMMANDS; done
-   */
-  private async executeForLoop(input: string): Promise<ExecResult> {
-    // Parse: for VAR in LIST; do COMMANDS; done
-    // Allow empty list (no space needed after "in" if list is empty)
-    const match = input.match(
-      /^for\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+in\s*(.*?)\s*;\s*do\s+(.*?)\s*;\s*done\s*$/s,
-    );
-    if (!match) {
-      // Try without semicolons before do
-      const match2 = input.match(
-        /^for\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+in\s*(.*?)\s+do\s+(.*?)\s*;\s*done\s*$/s,
-      );
-      if (!match2) {
-        return {
-          stdout: "",
-          stderr: "bash: syntax error near for loop\n",
-          exitCode: 2,
-        };
-      }
-      const [, varName, listStr, body] = match2;
-      return this.executeForLoopBody(varName, listStr, body);
-    }
-    const [, varName, listStr, body] = match;
-    return this.executeForLoopBody(varName, listStr, body);
-  }
-
-  private async executeForLoopBody(
-    varName: string,
-    listStr: string,
-    body: string,
-  ): Promise<ExecResult> {
-    // Expand the list (could be a glob, command substitution, or literal)
-    const items = listStr
-      .trim()
-      .split(/\s+/)
-      .filter((s) => s.length > 0);
-
-    let stdout = "";
-    let stderr = "";
-    let exitCode = 0;
-    let iterations = 0;
-
-    for (const item of items) {
-      if (iterations++ >= this.maxLoopIterations) {
-        return {
-          stdout,
-          stderr:
-            stderr +
-            `bash: for loop: too many iterations (${this.maxLoopIterations}). Increase with maxLoopIterations option.\n`,
-          exitCode: 1,
-        };
-      }
-
-      // Set the loop variable
-      this.env[varName] = item;
-
-      // Execute the body
-      const result = await this.exec(body);
-      stdout += result.stdout;
-      stderr += result.stderr;
-      exitCode = result.exitCode;
-    }
-
-    // Clean up the loop variable
-    delete this.env[varName];
-
-    return { stdout, stderr, exitCode };
-  }
-
-  /**
-   * Execute a while loop
-   * Syntax: while CONDITION; do COMMANDS; done
-   */
-  private async executeWhileLoop(input: string): Promise<ExecResult> {
-    // Parse: while CONDITION; do COMMANDS; done
-    const match = input.match(
-      /^while\s+(.*?)\s*;\s*do\s+(.*?)\s*;\s*done\s*$/s,
-    );
-    if (!match) {
-      const match2 = input.match(/^while\s+(.*?)\s+do\s+(.*?)\s*;\s*done\s*$/s);
-      if (!match2) {
-        return {
-          stdout: "",
-          stderr: "bash: syntax error near while loop\n",
-          exitCode: 2,
-        };
-      }
-      const [, condition, body] = match2;
-      return this.executeWhileLoopBody(condition, body);
-    }
-    const [, condition, body] = match;
-    return this.executeWhileLoopBody(condition, body);
-  }
-
-  private async executeWhileLoopBody(
-    condition: string,
-    body: string,
-  ): Promise<ExecResult> {
-    let stdout = "";
-    let stderr = "";
-    let exitCode = 0;
-    let iterations = 0;
-
-    while (true) {
-      if (iterations++ >= this.maxLoopIterations) {
-        return {
-          stdout,
-          stderr:
-            stderr +
-            `bash: while loop: too many iterations (${this.maxLoopIterations}). Increase with maxLoopIterations option.\n`,
-          exitCode: 1,
-        };
-      }
-
-      // Evaluate the condition
-      const condResult = await this.exec(condition);
-      if (condResult.exitCode !== 0) {
-        break; // Condition failed, exit loop
-      }
-
-      // Execute the body
-      const result = await this.exec(body);
-      stdout += result.stdout;
-      stderr += result.stderr;
-      exitCode = result.exitCode;
-    }
-
-    return { stdout, stderr, exitCode };
-  }
-
-  /**
-   * Execute an until loop
-   * Syntax: until CONDITION; do COMMANDS; done
-   */
-  private async executeUntilLoop(input: string): Promise<ExecResult> {
-    // Parse: until CONDITION; do COMMANDS; done
-    const match = input.match(
-      /^until\s+(.*?)\s*;\s*do\s+(.*?)\s*;\s*done\s*$/s,
-    );
-    if (!match) {
-      const match2 = input.match(/^until\s+(.*?)\s+do\s+(.*?)\s*;\s*done\s*$/s);
-      if (!match2) {
-        return {
-          stdout: "",
-          stderr: "bash: syntax error near until loop\n",
-          exitCode: 2,
-        };
-      }
-      const [, condition, body] = match2;
-      return this.executeUntilLoopBody(condition, body);
-    }
-    const [, condition, body] = match;
-    return this.executeUntilLoopBody(condition, body);
-  }
-
-  private async executeUntilLoopBody(
-    condition: string,
-    body: string,
-  ): Promise<ExecResult> {
-    let stdout = "";
-    let stderr = "";
-    let exitCode = 0;
-    let iterations = 0;
-
-    while (true) {
-      if (iterations++ >= this.maxLoopIterations) {
-        return {
-          stdout,
-          stderr:
-            stderr +
-            `bash: until loop: too many iterations (${this.maxLoopIterations}). Increase with maxLoopIterations option.\n`,
-          exitCode: 1,
-        };
-      }
-
-      // Evaluate the condition
-      const condResult = await this.exec(condition);
-      if (condResult.exitCode === 0) {
-        break; // Condition succeeded, exit loop (opposite of while)
-      }
-
-      // Execute the body
-      const result = await this.exec(body);
-      stdout += result.stdout;
-      stderr += result.stderr;
-      exitCode = result.exitCode;
-    }
-
-    return { stdout, stderr, exitCode };
+    return { name, body, rest };
   }
 
   private async executePipeline(
@@ -666,6 +624,7 @@ export class BashEnv {
         parsed.command,
         parsed.args,
         parsed.quotedArgs,
+        parsed.singleQuotedArgs,
         parsed.redirections,
         commandStdin,
       );
@@ -704,6 +663,7 @@ export class BashEnv {
     command: string,
     args: string[],
     quotedArgs: boolean[],
+    singleQuotedArgs: boolean[],
     redirections: Redirection[],
     stdin: string,
   ): Promise<ExecResult> {
@@ -729,15 +689,31 @@ export class BashEnv {
 
     // Check for compound commands (if statements collected by parser)
     if (command.startsWith("if ") || command.startsWith("if;")) {
-      return this.executeIfStatement(command);
+      return executeIfStatement(command, this.getInterpreterContext());
     }
 
     // Expand variables in command and args at execution time
-    // Only expand unquoted args - single-quoted args are literal, double-quoted are already expanded at parse time
-    const expandedCommand = this.expandVariables(command);
-    const varExpandedArgs = args.map((arg, i) =>
-      quotedArgs[i] ? arg : this.expandVariables(arg),
-    );
+    // Use async expansion to support command substitution $(...)
+    // Note: quotedArgs flag is used for glob expansion only
+    // singleQuotedArgs flag determines variable expansion (single-quoted = literal)
+    const expandedCommand = await expandVariablesAsync(command, {
+      env: this.env,
+      exec: this.exec.bind(this),
+    });
+    const varExpandedArgs: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      if (singleQuotedArgs[i]) {
+        // Single-quoted args are literal - no expansion
+        varExpandedArgs.push(args[i]);
+      } else {
+        varExpandedArgs.push(
+          await expandVariablesAsync(args[i], {
+            env: this.env,
+            exec: this.exec.bind(this),
+          }),
+        );
+      }
+    }
 
     // Create glob expander for this execution
     const globExpander = new GlobExpander(this.fs, this.cwd);
@@ -750,88 +726,36 @@ export class BashEnv {
 
     // Handle built-in commands that modify shell state
     if (expandedCommand === "cd") {
-      return this.handleCd(expandedArgs);
+      return handleCd(expandedArgs, this.getBuiltinContext());
     }
     if (expandedCommand === "export") {
-      return this.handleExport(expandedArgs);
+      return handleExport(expandedArgs, this.env);
     }
     if (expandedCommand === "unset") {
-      return this.handleUnset(expandedArgs);
+      return handleUnset(expandedArgs, this.env);
     }
     if (expandedCommand === "exit") {
-      const code = expandedArgs[0] ? parseInt(expandedArgs[0], 10) : 0;
-      return {
-        stdout: "",
-        stderr: "",
-        exitCode: Number.isNaN(code) ? 1 : code,
-      };
+      return handleExit(expandedArgs);
     }
     if (expandedCommand === "local") {
-      return this.handleLocal(expandedArgs);
+      return handleLocal(expandedArgs, this.getBuiltinContext());
+    }
+
+    // Handle [[ ]] test expressions
+    if (expandedCommand === "[[") {
+      return await handleTestExpression(expandedArgs, this.getInterpreterContext());
     }
 
     // Handle variable assignment: VAR=value (no args, command contains =)
-    if (expandedArgs.length === 0 && expandedCommand.includes("=")) {
-      const eqIndex = expandedCommand.indexOf("=");
-      const varName = expandedCommand.slice(0, eqIndex);
-      // Check if it's a valid variable name
-      if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(varName)) {
-        const value = expandedCommand.slice(eqIndex + 1);
-        this.env[varName] = value;
-        return { stdout: "", stderr: "", exitCode: 0 };
-      }
+    if (expandedArgs.length === 0) {
+      const assignResult = handleVariableAssignment(expandedCommand, this.env);
+      if (assignResult) return assignResult;
     }
 
     // Check for user-defined functions first
     const funcBody = this.functions.get(expandedCommand);
     if (funcBody) {
-      // Protection against infinite recursion
-      this.callDepth++;
-      if (this.callDepth > this.maxCallDepth) {
-        this.callDepth--;
-        return {
-          stdout: "",
-          stderr: `bash: ${expandedCommand}: maximum recursion depth (${this.maxCallDepth}) exceeded. Increase with maxCallDepth option.\n`,
-          exitCode: 1,
-        };
-      }
-
-      // Push a new local scope for this function call
-      this.localScopes.push(new Map());
-
-      // Set positional parameters ($1, $2, etc.)
-      for (let i = 0; i < expandedArgs.length; i++) {
-        this.env[String(i + 1)] = expandedArgs[i];
-      }
-      this.env["@"] = expandedArgs.join(" ");
-      this.env["#"] = String(expandedArgs.length);
-
-      // Execute the function body
-      const result = await this.exec(funcBody);
-
-      // Decrement call depth
-      this.callDepth--;
-
-      // Pop the local scope and restore shadowed variables
-      const localScope = this.localScopes.pop();
-      if (localScope) {
-        for (const [varName, originalValue] of localScope) {
-          if (originalValue === undefined) {
-            delete this.env[varName];
-          } else {
-            this.env[varName] = originalValue;
-          }
-        }
-      }
-
-      // Clean up positional parameters
-      for (let i = 1; i <= expandedArgs.length; i++) {
-        delete this.env[String(i)];
-      }
-      delete this.env["@"];
-      delete this.env["#"];
-
-      return result;
+      return this.executeFunction(expandedCommand, funcBody, expandedArgs);
     }
 
     // Look up command - handle paths like /bin/ls
@@ -872,6 +796,63 @@ export class BashEnv {
 
     // Apply redirections
     result = await this.applyRedirections(result, redirections);
+
+    return result;
+  }
+
+  /**
+   * Execute a user-defined function
+   */
+  private async executeFunction(
+    name: string,
+    body: string,
+    args: string[],
+  ): Promise<ExecResult> {
+    // Protection against infinite recursion
+    this.callDepth++;
+    if (this.callDepth > this.maxCallDepth) {
+      this.callDepth--;
+      return {
+        stdout: "",
+        stderr: `bash: ${name}: maximum recursion depth (${this.maxCallDepth}) exceeded. Increase with maxCallDepth option.\n`,
+        exitCode: 1,
+      };
+    }
+
+    // Push a new local scope for this function call
+    this.localScopes.push(new Map());
+
+    // Set positional parameters ($1, $2, etc.)
+    for (let i = 0; i < args.length; i++) {
+      this.env[String(i + 1)] = args[i];
+    }
+    this.env["@"] = args.join(" ");
+    this.env["#"] = String(args.length);
+
+    // Execute the function body
+    const result = await this.exec(body);
+
+    // Decrement call depth
+    this.callDepth--;
+
+    // Pop the local scope and restore shadowed variables
+    const localScope = this.localScopes.pop();
+    if (localScope) {
+      for (const [varName, originalValue] of localScope) {
+        if (originalValue === undefined) {
+          delete this.env[varName];
+        } else {
+          this.env[varName] = originalValue;
+        }
+      }
+    }
+
+    // Clean up positional parameters
+    for (let i = 1; i <= args.length; i++) {
+      delete this.env[String(i)];
+    }
+    delete this.env["@"];
+    delete this.env["#"];
 
     return result;
   }
@@ -920,170 +901,8 @@ export class BashEnv {
     return { stdout, stderr, exitCode };
   }
 
-  private async handleCd(args: string[]): Promise<ExecResult> {
-    const target = args[0] || this.env.HOME || "/";
-
-    let newDir: string;
-    if (target === "-") {
-      newDir = this.previousDir;
-    } else if (target === "~") {
-      newDir = this.env.HOME || "/";
-    } else {
-      newDir = this.resolvePath(target);
-    }
-
-    try {
-      const stat = await this.fs.stat(newDir);
-      if (!stat.isDirectory) {
-        return {
-          stdout: "",
-          stderr: `cd: ${target}: Not a directory\n`,
-          exitCode: 1,
-        };
-      }
-      this.previousDir = this.cwd;
-      this.cwd = newDir;
-      return { stdout: "", stderr: "", exitCode: 0 };
-    } catch {
-      return {
-        stdout: "",
-        stderr: `cd: ${target}: No such file or directory\n`,
-        exitCode: 1,
-      };
-    }
-  }
-
-  private handleExport(args: string[]): ExecResult {
-    for (const arg of args) {
-      const eqIndex = arg.indexOf("=");
-      if (eqIndex > 0) {
-        const name = arg.slice(0, eqIndex);
-        const value = arg.slice(eqIndex + 1);
-        this.env[name] = value;
-      }
-    }
-    return { stdout: "", stderr: "", exitCode: 0 };
-  }
-
-  private handleUnset(args: string[]): ExecResult {
-    for (const arg of args) {
-      delete this.env[arg];
-    }
-    return { stdout: "", stderr: "", exitCode: 0 };
-  }
-
-  private handleLocal(args: string[]): ExecResult {
-    // 'local' is only valid inside a function
-    if (this.localScopes.length === 0) {
-      return {
-        stdout: "",
-        stderr: "bash: local: can only be used in a function\n",
-        exitCode: 1,
-      };
-    }
-
-    const currentScope = this.localScopes[this.localScopes.length - 1];
-
-    for (const arg of args) {
-      const eqIndex = arg.indexOf("=");
-      let varName: string;
-      let value: string | undefined;
-
-      if (eqIndex > 0) {
-        varName = arg.slice(0, eqIndex);
-        value = arg.slice(eqIndex + 1);
-      } else {
-        varName = arg;
-        value = undefined;
-      }
-
-      // Save the original value (or undefined if it didn't exist)
-      // Only save if we haven't already saved it in this scope
-      if (!currentScope.has(varName)) {
-        currentScope.set(varName, this.env[varName]);
-      }
-
-      // Set the new value
-      if (value !== undefined) {
-        this.env[varName] = value;
-      } else if (!(varName in this.env)) {
-        // If no value and variable doesn't exist, set to empty string
-        this.env[varName] = "";
-      }
-    }
-
-    return { stdout: "", stderr: "", exitCode: 0 };
-  }
-
   private resolvePath(path: string): string {
     return this.fs.resolvePath(this.cwd, path);
-  }
-
-  /**
-   * Expand variables in a string at execution time
-   */
-  private expandVariables(str: string): string {
-    let result = "";
-    let i = 0;
-
-    while (i < str.length) {
-      if (str[i] === "$" && i + 1 < str.length) {
-        const nextChar = str[i + 1];
-
-        // Handle ${VAR} and ${VAR:-default}
-        if (nextChar === "{") {
-          const closeIndex = str.indexOf("}", i + 2);
-          if (closeIndex !== -1) {
-            const content = str.slice(i + 2, closeIndex);
-            const defaultMatch = content.match(/^([^:]+):-(.*)$/);
-            if (defaultMatch) {
-              const [, varName, defaultValue] = defaultMatch;
-              result += this.env[varName] ?? defaultValue;
-            } else {
-              result += this.env[content] ?? "";
-            }
-            i = closeIndex + 1;
-            continue;
-          }
-        }
-
-        // Handle special variables: $@, $#, $$, $?, $!, $*
-        if ("@#$?!*".includes(nextChar)) {
-          result += this.env[nextChar] ?? "";
-          i += 2;
-          continue;
-        }
-
-        // Handle positional parameters: $0, $1, $2, ...
-        if (/[0-9]/.test(nextChar)) {
-          result += this.env[nextChar] ?? "";
-          i += 2;
-          continue;
-        }
-
-        // Handle $VAR
-        if (/[A-Za-z_]/.test(nextChar)) {
-          let varName = nextChar;
-          let j = i + 2;
-          while (j < str.length && /[A-Za-z0-9_]/.test(str[j])) {
-            varName += str[j];
-            j++;
-          }
-          result += this.env[varName] ?? "";
-          i = j;
-          continue;
-        }
-
-        // Lone $ or unrecognized pattern
-        result += str[i];
-        i++;
-      } else {
-        result += str[i];
-        i++;
-      }
-    }
-
-    return result;
   }
 
   // Public API for file access

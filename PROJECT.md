@@ -198,3 +198,19 @@ xargs — build argument lists
   - Command should be eagerly registered
   - But their implementations should only be loaded when they are actually called
 - Make sure that files support Buffers and encoding
+
+## All before this is done
+
+Woohoo
+
+## Implementation phase 13
+
+- Block `return await` with biome
+- Do we handle stop of execution in multi-line script for non-zero return values?
+
+## Implementation phase 14
+
+- Should the parser be rewritten to use an official AST? Could we parse with an official bash grammar?
+  - Search the web for official grammars and use an existing npm package for parsing the grammer and the input
+- Further extend composition tests
+- Start by writing `real-parser.md` and then confirm further work.

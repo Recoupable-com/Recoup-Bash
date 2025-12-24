@@ -6,16 +6,6 @@ This document lists features **not yet implemented** in BashEnv. Use this as a r
 
 ## Shell Language Features (Not Implemented)
 
-### Critical Missing Features
-
-| Feature | Syntax | Why It Matters |
-|---------|--------|----------------|
-| Command substitution | `$(cmd)` or `` `cmd` `` | Essential for capturing command output in variables |
-| Arithmetic expansion | `$((expr))` | Math in shell scripts: `$((x + 1))`, `$((count++))` |
-| Here documents | `<<EOF` | Multi-line input to commands |
-| `case` statements | `case $x in ... esac` | Switch-case control flow |
-| Test expressions | `[[ $x == pattern ]]` | Advanced conditionals with pattern matching |
-
 ### Secondary Missing Features
 
 | Feature | Syntax | Why It Matters |
@@ -75,16 +65,6 @@ This document lists features **not yet implemented** in BashEnv. Use this as a r
 
 ## Implementation Priority
 
-### Phase 1: Shell Language (High Impact)
-
-| # | Feature | Why It Matters |
-|---|---------|----------------|
-| 1 | `$(cmd)` command substitution | Capture command output in variables |
-| 2 | `$((expr))` arithmetic | Math operations in shell |
-| 3 | `case...esac` statements | Switch-case control flow |
-| 4 | `[[ ]]` test expressions | Advanced conditionals |
-| 5 | Here documents `<<EOF` | Multi-line input |
-
 ### Phase 2: Nice to Have
 
 | # | Feature | Command | Why It Matters |
@@ -110,6 +90,11 @@ This document lists features **not yet implemented** in BashEnv. Use this as a r
 - Command chaining (`&&`, `||`, `;`)
 - Glob patterns (`*`, `?`, `[...]`)
 - Negation operator (`!`)
+- **Command substitution** `$(cmd)` - Capture command output
+- **Arithmetic expansion** `$((expr))` - Math operations (+, -, *, /, %, **, comparisons, logical, bitwise)
+- **`case...esac` statements** - Switch-case with pattern matching
+- **`[[ ]]` test expressions** - String/numeric/file tests, pattern matching, regex `=~`
+- **Here documents** `<<EOF` - Multi-line input to commands
 
 ### Commands (Well-Supported)
 - **grep**: `-E`, `-F`, `-i`, `-v`, `-w`, `-c`, `-l`, `-L`, `-n`, `-h`, `-o`, `-q`, `-r`, `-R`, `-A`, `-B`, `-C`, `--include`, `--exclude`

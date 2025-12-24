@@ -22,6 +22,8 @@ export interface ParsedCommand {
   args: string[];
   /** Tracks which args were quoted (should not be glob-expanded) */
   quotedArgs: boolean[];
+  /** Tracks which args were single-quoted (should not be variable-expanded) */
+  singleQuotedArgs: boolean[];
   redirections: Redirection[];
 }
 
@@ -64,6 +66,8 @@ interface Token {
   value: string;
   /** True if the token was quoted (should not be glob-expanded). Only relevant for 'word' tokens. */
   quoted?: boolean;
+  /** True if the token was single-quoted (should not be variable-expanded). Only relevant for 'word' tokens. */
+  singleQuoted?: boolean;
 }
 
 export class ShellParser {
@@ -94,12 +98,19 @@ export class ShellParser {
     let current = "";
     let inQuote: string | null = null;
     let wasQuoted = false; // Track if current token contains any quoted content
+    let wasSingleQuoted = false; // Track if current token was single-quoted
 
     const pushWord = () => {
       if (current) {
-        tokens.push({ type: "word", value: current, quoted: wasQuoted });
+        tokens.push({
+          type: "word",
+          value: current,
+          quoted: wasQuoted,
+          singleQuoted: wasSingleQuoted,
+        });
         current = "";
         wasQuoted = false;
+        wasSingleQuoted = false;
       }
     };
 
@@ -121,7 +132,13 @@ export class ShellParser {
             nextChar === "$" ||
             nextChar === "`"
           ) {
-            current += nextChar;
+            // For escaped $, use placeholder \x01$ so it won't be expanded
+            // The placeholder is stripped after variable expansion
+            if (nextChar === "$") {
+              current += "\x01$";
+            } else {
+              current += nextChar;
+            }
             i += 2;
           } else {
             current += char;
@@ -139,15 +156,49 @@ export class ShellParser {
       // Note: We preserve $VAR syntax here and expand later in execution
       // This allows commands like "local x=1; echo $x" to work correctly
       if (char === "$" && inQuote !== "'") {
-        // In double quotes, we still need to expand to handle ${VAR:-default} etc.
-        // But for simple $VAR, preserve for later expansion
-        if (inQuote === '"') {
-          const { value, endIndex } = this.expandVariable(input, i);
-          current += value;
-          i = endIndex;
+        // Handle $((expr)) arithmetic expansion - capture entire expression
+        if (nextChar === "(" && input[i + 2] === "(") {
+          const closeIndex = this.findMatchingDoubleParen(input, i + 2);
+          if (closeIndex !== -1) {
+            current += input.slice(i, closeIndex + 2); // include $((expr))
+            i = closeIndex + 2;
+            continue;
+          }
+        }
+
+        // Handle $(cmd) command substitution - capture entire command
+        if (nextChar === "(") {
+          const closeIndex = this.findMatchingParen(input, i + 1);
+          if (closeIndex !== -1) {
+            current += input.slice(i, closeIndex + 1); // include $(cmd)
+            i = closeIndex + 1;
+            continue;
+          }
+        }
+
+        // Preserve variable references for later expansion at execution time
+        // This applies both inside and outside double quotes
+        // The executor will handle expansion with the current env at that time
+        if (input[i + 1] === "{") {
+          // ${...} syntax - find the closing brace
+          const closeIdx = input.indexOf("}", i + 2);
+          if (closeIdx !== -1) {
+            current += input.slice(i, closeIdx + 1);
+            i = closeIdx + 1;
+            continue;
+          }
+        }
+        // Simple $VAR reference - collect the variable name
+        let j = i + 1;
+        while (j < input.length && /[a-zA-Z0-9_]/.test(input[j])) {
+          j++;
+        }
+        if (j > i + 1) {
+          current += input.slice(i, j);
+          i = j;
           continue;
         }
-        // Outside quotes, preserve the $ for later expansion
+        // Just a $ sign
         current += char;
         i++;
         continue;
@@ -160,6 +211,9 @@ export class ShellParser {
         } else if (!inQuote) {
           inQuote = char;
           wasQuoted = true; // Mark that this token contains quoted content
+          if (char === "'") {
+            wasSingleQuoted = true; // Mark single-quoted (literal, no expansion)
+          }
         } else {
           current += char;
         }
@@ -285,6 +339,21 @@ export class ShellParser {
         continue;
       }
 
+      // Handle newlines as statement separators (like semicolons)
+      if (char === "\n") {
+        pushWord();
+        // Only add semicolon token if there's content before this
+        // (avoid multiple consecutive semicolons)
+        if (
+          tokens.length > 0 &&
+          tokens[tokens.length - 1].type !== "semicolon"
+        ) {
+          tokens.push({ type: "semicolon", value: ";" });
+        }
+        i++;
+        continue;
+      }
+
       // Regular character
       current += char;
       i++;
@@ -367,6 +436,78 @@ export class ShellParser {
       value: this.env[varName] ?? "",
       endIndex: i,
     };
+  }
+
+  /**
+   * Find matching ) for $(...), handling nesting
+   */
+  private findMatchingParen(str: string, start: number): number {
+    let depth = 1;
+    let i = start + 1;
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+
+    while (i < str.length && depth > 0) {
+      const char = str[i];
+
+      // Handle escape sequences
+      if (char === "\\" && !inSingleQuote && i + 1 < str.length) {
+        i += 2;
+        continue;
+      }
+
+      // Handle quotes
+      if (char === "'" && !inDoubleQuote) {
+        inSingleQuote = !inSingleQuote;
+        i++;
+        continue;
+      }
+      if (char === '"' && !inSingleQuote) {
+        inDoubleQuote = !inDoubleQuote;
+        i++;
+        continue;
+      }
+
+      // Handle nested $(...) - only count if not in quotes
+      if (!inSingleQuote && !inDoubleQuote) {
+        if (char === "$" && str[i + 1] === "(") {
+          depth++;
+          i += 2;
+          continue;
+        }
+        if (char === "(") depth++;
+        else if (char === ")") depth--;
+      }
+
+      if (depth > 0) i++;
+    }
+
+    return depth === 0 ? i : -1;
+  }
+
+  /**
+   * Find matching )) for $((...)), handling nesting
+   */
+  private findMatchingDoubleParen(str: string, start: number): number {
+    let depth = 1;
+    let i = start + 1;
+
+    while (i < str.length && depth > 0) {
+      if (str[i] === "(" && str[i + 1] === "(") {
+        depth++;
+        i += 2;
+        continue;
+      }
+      if (str[i] === ")" && str[i + 1] === ")") {
+        depth--;
+        if (depth === 0) return i;
+        i += 2;
+        continue;
+      }
+      i++;
+    }
+
+    return -1;
   }
 
   /**
@@ -455,7 +596,7 @@ export class ShellParser {
   private buildPipelines(tokens: Token[]): Pipeline[] {
     const pipelines: Pipeline[] = [];
     let currentPipeline: Pipeline = { commands: [] };
-    let currentArgs: { value: string; quoted: boolean }[] = [];
+    let currentArgs: { value: string; quoted: boolean; singleQuoted?: boolean }[] = [];
     let currentRedirections: Redirection[] = [];
     let lastOperator: "" | "&&" | "||" | ";" = "";
     let negationCount = 0; // Count of ! operators for current pipeline segment
@@ -467,7 +608,8 @@ export class ShellParser {
           parsed: {
             command: commandArg.value,
             args: restArgs.map((a) => a.value),
-            quotedArgs: restArgs.map((a) => a.quoted),
+            quotedArgs: restArgs.map((a) => a.quoted || false),
+            singleQuotedArgs: restArgs.map((a) => a.singleQuoted || false),
             redirections: currentRedirections,
           },
           operator: lastOperator,
@@ -513,6 +655,7 @@ export class ShellParser {
           currentArgs.push({
             value: token.value,
             quoted: token.quoted ?? false,
+            singleQuoted: token.singleQuoted ?? false,
           });
           break;
 

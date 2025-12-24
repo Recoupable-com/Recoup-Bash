@@ -96,13 +96,14 @@ export interface CpOptions {
  * - Custom implementations (e.g., remote storage, browser IndexedDB)
  */
 export interface IFileSystem {
+  // Note: Sync method are not supported and must not be added.
   /**
    * Read the contents of a file as a string (default: utf8)
    * @throws Error if file doesn't exist or is a directory
    */
   readFile(
     path: string,
-    options?: ReadFileOptions | BufferEncoding,
+    options?: ReadFileOptions | BufferEncoding
   ): Promise<string>;
 
   /**
@@ -117,7 +118,7 @@ export interface IFileSystem {
   writeFile(
     path: string,
     content: FileContent,
-    options?: WriteFileOptions | BufferEncoding,
+    options?: WriteFileOptions | BufferEncoding
   ): Promise<void>;
 
   /**
@@ -126,7 +127,7 @@ export interface IFileSystem {
   appendFile(
     path: string,
     content: FileContent,
-    options?: WriteFileOptions | BufferEncoding,
+    options?: WriteFileOptions | BufferEncoding
   ): Promise<void>;
 
   /**
