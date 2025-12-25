@@ -6,6 +6,14 @@ Designed for AI agents that need a secure, sandboxed bash environment.
 
 Supports optional network access via `curl` with secure-by-default URL filtering.
 
+## Security model
+
+- The shell only has access to the provided file system.
+- Execution is protected against infinite loops or recursion through.
+- Binaries or even WASM are inherently unsupported (Use [Vercel Sandbox](https://vercel.com/docs/vercel-sandbox) or a similar product if a full VM is needed).
+- There is no network access by default.
+- Network access can be enabled, but requests are checked against URL prefix allow-lists and HTTP-method allow-lists. See [network access](#network-access) for details
+
 ## Installation
 
 ```bash
@@ -94,30 +102,6 @@ await sandbox.mkDir("/app/logs", { recursive: true });
 
 // Clean up (no-op for BashEnv, but API-compatible)
 await sandbox.stop();
-```
-
-#### Command Streaming
-
-The `Command` class provides multiple ways to access output:
-
-```typescript
-const cmd = await sandbox.runCommand("echo hello; echo world >&2");
-
-// Get stdout/stderr separately
-const stdout = await cmd.stdout(); // "hello\n"
-const stderr = await cmd.stderr(); // "world\n"
-
-// Get combined output
-const output = await cmd.output(); // "hello\nworld\n"
-
-// Stream logs as they arrive
-for await (const msg of cmd.logs()) {
-  console.log(msg.type, msg.data); // "stdout" "hello\n", "stderr" "world\n"
-}
-
-// Wait for completion
-const finished = await cmd.wait();
-console.log(finished.exitCode); // 0
 ```
 
 ### Interactive Shell
