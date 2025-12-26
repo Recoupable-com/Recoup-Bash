@@ -343,8 +343,19 @@ export class OverlayFs implements IFileSystem {
     return fromBuffer(buffer, encoding);
   }
 
-  async readFileBuffer(path: string): Promise<Uint8Array> {
+  async readFileBuffer(
+    path: string,
+    seen: Set<string> = new Set(),
+  ): Promise<Uint8Array> {
     const normalized = this.normalizePath(path);
+
+    // Detect symlink loops
+    if (seen.has(normalized)) {
+      throw new Error(
+        `ELOOP: too many levels of symbolic links, open '${path}'`,
+      );
+    }
+    seen.add(normalized);
 
     // Check if deleted
     if (this.deleted.has(normalized)) {
@@ -356,7 +367,7 @@ export class OverlayFs implements IFileSystem {
     if (memEntry) {
       if (memEntry.type === "symlink") {
         const target = this.resolveSymlink(normalized, memEntry.target);
-        return this.readFileBuffer(target);
+        return this.readFileBuffer(target, seen);
       }
       if (memEntry.type !== "file") {
         throw new Error(
@@ -377,7 +388,7 @@ export class OverlayFs implements IFileSystem {
       if (stat.isSymbolicLink()) {
         const target = await fs.promises.readlink(realPath);
         const resolvedTarget = this.resolveSymlink(normalized, target);
-        return this.readFileBuffer(resolvedTarget);
+        return this.readFileBuffer(resolvedTarget, seen);
       }
       if (stat.isDirectory()) {
         throw new Error(
@@ -451,8 +462,16 @@ export class OverlayFs implements IFileSystem {
     return this.existsInOverlay(path);
   }
 
-  async stat(path: string): Promise<FsStat> {
+  async stat(path: string, seen: Set<string> = new Set()): Promise<FsStat> {
     const normalized = this.normalizePath(path);
+
+    // Detect symlink loops
+    if (seen.has(normalized)) {
+      throw new Error(
+        `ELOOP: too many levels of symbolic links, stat '${path}'`,
+      );
+    }
+    seen.add(normalized);
 
     if (this.deleted.has(normalized)) {
       throw new Error(`ENOENT: no such file or directory, stat '${path}'`);
@@ -464,7 +483,7 @@ export class OverlayFs implements IFileSystem {
       // Follow symlinks
       if (entry.type === "symlink") {
         const target = this.resolveSymlink(normalized, entry.target);
-        return this.stat(target);
+        return this.stat(target, seen);
       }
 
       let size = 0;

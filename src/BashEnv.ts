@@ -298,6 +298,15 @@ export class BashEnv {
           env: { ...this.state.env, ...options?.env },
         };
       }
+      // RangeError occurs when JavaScript call stack is exceeded (deep recursion)
+      if (error instanceof RangeError) {
+        return {
+          stdout: "",
+          stderr: `bash: ${error.message}\n`,
+          exitCode: 1,
+          env: { ...this.state.env, ...options?.env },
+        };
+      }
       throw error;
     }
   }
