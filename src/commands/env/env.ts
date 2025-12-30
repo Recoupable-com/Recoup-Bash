@@ -107,7 +107,7 @@ export const envCommand: Command = {
       .join(" ");
 
     const fullCommand = envPrefix ? `${envPrefix} ${command}` : command;
-    return ctx.exec(fullCommand);
+    return ctx.exec(fullCommand, { cwd: ctx.cwd });
   },
 };
 

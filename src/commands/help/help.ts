@@ -108,7 +108,7 @@ Otherwise, lists all available commands.
     // If a command name is provided, delegate to that command's --help
     if (args.length > 0 && ctx.exec) {
       const cmdName = args[0];
-      return ctx.exec(`${cmdName} --help`);
+      return ctx.exec(`${cmdName} --help`, { cwd: ctx.cwd });
     }
 
     // List all available commands

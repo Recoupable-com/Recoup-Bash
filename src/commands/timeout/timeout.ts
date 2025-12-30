@@ -154,7 +154,7 @@ export const timeoutCommand: Command = {
     });
 
     const execPromise = ctx
-      .exec(commandStr)
+      .exec(commandStr, { cwd: ctx.cwd })
       .then((result) => ({ timedOut: false as const, result }));
 
     const outcome = await Promise.race([timeoutPromise, execPromise]);

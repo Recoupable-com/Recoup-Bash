@@ -293,7 +293,7 @@ export const findCommand: Command = {
                 }
               }
               const cmd = cmdWithFiles.map((p) => `"${p}"`).join(" ");
-              const result = await ctx.exec(cmd);
+              const result = await ctx.exec(cmd, { cwd: ctx.cwd });
               stdout += result.stdout;
               stderr += result.stderr;
               if (result.exitCode !== 0) {
@@ -306,7 +306,7 @@ export const findCommand: Command = {
                   part === "{}" ? file : part,
                 );
                 const cmd = cmdWithFile.map((p) => `"${p}"`).join(" ");
-                const result = await ctx.exec(cmd);
+                const result = await ctx.exec(cmd, { cwd: ctx.cwd });
                 stdout += result.stdout;
                 stderr += result.stderr;
                 if (result.exitCode !== 0) {

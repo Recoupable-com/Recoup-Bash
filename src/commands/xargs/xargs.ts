@@ -108,9 +108,9 @@ export const xargsCommand: Command = {
       if (verbose) {
         stderr += `${cmdLine}\n`;
       }
-      // Use ctx.exec to run the command
+      // Use ctx.exec to run the command, passing current working directory
       if (ctx.exec) {
-        return ctx.exec(cmdLine);
+        return ctx.exec(cmdLine, { cwd: ctx.cwd });
       }
       // Fallback: just output what would be run
       return { stdout: `${cmdLine}\n`, stderr: "", exitCode: 0 };

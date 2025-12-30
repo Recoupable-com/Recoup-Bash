@@ -151,6 +151,9 @@ async function executeScript(
   // Execute all commands joined by semicolons
   // Pass positional parameters via the env option
   const commandString = commands.join("; ");
-  const result = await ctx.exec(commandString, { env: positionalEnv });
+  const result = await ctx.exec(commandString, {
+    env: positionalEnv,
+    cwd: ctx.cwd,
+  });
   return result;
 }

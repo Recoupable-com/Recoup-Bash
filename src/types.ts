@@ -15,12 +15,16 @@ export interface BashExecResult extends ExecResult {
   env: Record<string, string>;
 }
 
-/** Options for exec calls within commands */
+/** Options for exec calls within commands (internal API) */
 export interface CommandExecOptions {
   /** Environment variables to merge into the exec state */
   env?: Record<string, string>;
-  /** Working directory for the exec */
-  cwd?: string;
+  /**
+   * Working directory for the exec.
+   * Required to prevent bugs where subcommands run in the wrong directory.
+   * Always pass `ctx.cwd` from the calling command's context.
+   */
+  cwd: string;
 }
 
 /**
@@ -56,8 +60,11 @@ export interface CommandContext {
   /**
    * Execute a subcommand (e.g., for `xargs`, `bash -c`).
    * Available when running commands via BashEnv interpreter.
+   *
+   * @param command - The command string to execute
+   * @param options - Required options including `cwd` to prevent directory bugs
    */
-  exec?: (command: string, options?: CommandExecOptions) => Promise<ExecResult>;
+  exec?: (command: string, options: CommandExecOptions) => Promise<ExecResult>;
   /**
    * Secure fetch function for network requests (e.g., for `curl`).
    * Only available when `network` option is configured in BashEnv.

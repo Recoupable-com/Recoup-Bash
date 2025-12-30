@@ -159,6 +159,37 @@ describe("xargs command", () => {
       const resultB = await env.exec("cat /backup/b");
       expect(resultB.stdout).toBe("original-b");
     });
+
+    it("should respect current working directory after cd", async () => {
+      const env = new Bash({
+        files: {
+          "/project/src/file1.ts": "line1\nline2\n",
+          "/project/src/file2.ts": "line1\nline2\nline3\n",
+        },
+      });
+      // This pattern failed before the fix - xargs didn't pass cwd to subcommands
+      const result = await env.exec(
+        'cd /project && find src -name "*.ts" | xargs wc -l',
+      );
+      expect(result.stdout).toContain("src/file1.ts");
+      expect(result.stdout).toContain("src/file2.ts");
+      expect(result.stdout).toContain("total");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("should work with find | xargs cat after cd", async () => {
+      const env = new Bash({
+        files: {
+          "/project/data/a.txt": "content-a",
+          "/project/data/b.txt": "content-b",
+        },
+      });
+      const result = await env.exec(
+        'cd /project && find data -name "*.txt" | sort | xargs cat',
+      );
+      expect(result.stdout).toBe("content-acontent-b");
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   describe("exit codes", () => {

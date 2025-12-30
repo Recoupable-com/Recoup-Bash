@@ -252,7 +252,7 @@ describe("custom-commands", () => {
         if (!ctx.exec) {
           return { stdout: "", stderr: "exec not available\n", exitCode: 1 };
         }
-        const subResult = await ctx.exec(args.join(" "));
+        const subResult = await ctx.exec(args.join(" "), { cwd: ctx.cwd });
         return {
           stdout: `[wrapped] ${subResult.stdout}`,
           stderr: subResult.stderr,
