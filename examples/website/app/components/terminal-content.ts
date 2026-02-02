@@ -17,8 +17,6 @@ Custom commands:
 
 Or try any bash command: ls, cat, echo, grep, awk, jq, sed, etc.
 Type 'help' for a list of all built-in commands.
-
-Created by Vercel Labs - https://vercel.com/
 `;
 
 export const CMD_INSTALL = `npm install just-bash
@@ -995,7 +993,7 @@ Key types to explore:
 - \`InitialFiles\` - File specification format
 `;
 
-export const FILE_WTF_IS_THIS = `# just-bash website
+export const FILE_WTF_IS_THIS = `# just-bash website at https://justbash.dev/
 
 This is an interactive demo of **just-bash** running entirely in your browser, with an AI agent that can explore the source code.
 

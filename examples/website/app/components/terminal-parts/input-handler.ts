@@ -254,32 +254,39 @@ export function createInputHandler(term: Terminal, bash: Bash) {
     }
   };
 
+  // Execute a command programmatically
+  const executeCommand = async (command: string) => {
+    const trimmed = command.trim();
+    if (!trimmed) return;
+
+    history.push(trimmed);
+    historyIndex = history.length;
+    sessionStorage.setItem(
+      HISTORY_KEY,
+      JSON.stringify(history.slice(-MAX_HISTORY))
+    );
+
+    if (trimmed === "clear") {
+      term.write("\x1b[2J\x1b[3J\x1b[H");
+    } else {
+      const result = await bash.exec(trimmed);
+      if (result.stdout)
+        term.write(
+          formatMarkdown(colorizeUrls(result.stdout)).replace(/\n/g, "\r\n")
+        );
+      if (result.stderr) term.write(result.stderr.replace(/\n/g, "\r\n"));
+    }
+
+    cmd = "";
+    cursorPos = 0;
+    term.write("$ ");
+  };
+
   term.onData(async (e: string) => {
     // Enter - execute command
     if (e === "\r") {
       term.writeln("");
-      if (cmd.trim()) {
-        history.push(cmd);
-        historyIndex = history.length;
-        sessionStorage.setItem(
-          HISTORY_KEY,
-          JSON.stringify(history.slice(-MAX_HISTORY))
-        );
-        if (cmd.trim() === "clear") {
-          // Clear screen and scrollback, move cursor to home
-          term.write("\x1b[2J\x1b[3J\x1b[H");
-        } else {
-          const result = await bash.exec(cmd.trim());
-          if (result.stdout)
-            term.write(
-              formatMarkdown(colorizeUrls(result.stdout)).replace(/\n/g, "\r\n")
-            );
-          if (result.stderr) term.write(result.stderr.replace(/\n/g, "\r\n"));
-        }
-      }
-      cmd = "";
-      cursorPos = 0;
-      term.write("$ ");
+      await executeCommand(cmd);
       return;
     }
 
@@ -466,6 +473,11 @@ export function createInputHandler(term: Terminal, bash: Bash) {
       cmd = initialCmd;
       cursorPos = initialCmd.length;
       term.write(initialCmd);
+    },
+    executeCommand: async (command: string) => {
+      term.write(command);
+      term.writeln("");
+      await executeCommand(command);
     },
   };
 }

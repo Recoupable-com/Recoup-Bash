@@ -71,12 +71,26 @@ export default function TerminalComponent() {
     // Load additional files from API into bash filesystem
     void fetchFiles(bash);
 
-    // Show welcome
+    // Track cleanup state
+    let disposed = false;
+
+    // Show welcome and handle ?agent= query parameter
     requestAnimationFrame(() => {
+      if (disposed) return;
+
       showWelcome(term);
 
-      // Pre-populate command if history is empty
-      if (inputHandler.history.length === 0) {
+      // Check for ?agent= query parameter
+      const params = new URLSearchParams(window.location.search);
+      const agentQuery = params.get("agent");
+
+      if (agentQuery) {
+        // Clean the URL
+        window.history.replaceState({}, "", window.location.pathname);
+        // Execute the agent command
+        void inputHandler.executeCommand(`agent "${agentQuery}"`);
+      } else if (inputHandler.history.length === 0) {
+        // Pre-populate command if history is empty and no query param
         inputHandler.setInitialCommand('agent "What is just-bash?"');
       }
     });
@@ -92,6 +106,7 @@ export default function TerminalComponent() {
     term.focus();
 
     return () => {
+      disposed = true;
       colorSchemeQuery.removeEventListener("change", onColorSchemeChange);
       term.dispose();
     };

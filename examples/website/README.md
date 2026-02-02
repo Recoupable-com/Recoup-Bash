@@ -1,4 +1,4 @@
-# just-bash website
+# just-bash website at https://justbash.dev/
 
 This is an interactive demo of **just-bash** running entirely in your browser, with an AI agent that can explore the source code.
 
