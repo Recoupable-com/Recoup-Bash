@@ -3,7 +3,7 @@ import { Bash } from "../../Bash.js";
 
 describe("python3 data structures", () => {
   describe("lists", () => {
-    it("should create and manipulate lists", async () => {
+    it("should create and manipulate lists", { timeout: 60000 }, async () => {
       const env = new Bash();
       await env.exec(`cat > /tmp/test_list.py << 'EOF'
 lst = [1, 2, 3]

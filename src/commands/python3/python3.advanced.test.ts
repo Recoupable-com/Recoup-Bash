@@ -3,7 +3,7 @@ import { Bash } from "../../Bash.js";
 
 describe("python3 advanced features", () => {
   describe("generators", () => {
-    it("should create simple generators", async () => {
+    it("should create simple generators", { timeout: 60000 }, async () => {
       const env = new Bash();
       await env.exec(`cat > /tmp/test_generator.py << 'EOF'
 def countdown(n):

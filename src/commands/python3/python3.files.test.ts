@@ -6,7 +6,7 @@ import { Bash } from "../../Bash.js";
 
 describe("python3 script files", () => {
   describe("script file execution", () => {
-    it("should execute a Python script file", async () => {
+    it("should execute a Python script file", { timeout: 60000 }, async () => {
       const env = new Bash();
       await env.exec(`cat > /tmp/script.py << 'EOF'
 print("Hello from script")

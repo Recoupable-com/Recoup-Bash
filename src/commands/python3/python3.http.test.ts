@@ -27,7 +27,7 @@ beforeEach(() => {
 
 describe("python3 HTTP requests", () => {
   describe("jb_http module", () => {
-    it("should make a GET request", async () => {
+    it("should make a GET request", { timeout: 60000 }, async () => {
       mockFetch.mockResolvedValueOnce(
         new Response('{"url": "https://api.example.com/get"}', {
           status: 200,

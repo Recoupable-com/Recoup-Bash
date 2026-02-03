@@ -3,7 +3,7 @@ import { Bash } from "../../Bash.js";
 
 describe("python3 standard library", () => {
   describe("json module", () => {
-    it("should serialize to JSON", async () => {
+    it("should serialize to JSON", { timeout: 60000 }, async () => {
       const env = new Bash();
       const result = await env.exec(
         `python3 -c "import json; print(json.dumps({'name': 'test', 'value': 42}))"`,

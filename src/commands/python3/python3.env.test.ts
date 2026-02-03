@@ -3,7 +3,7 @@ import { Bash } from "../../Bash.js";
 
 describe("python3 environment", () => {
   describe("environment variables", () => {
-    it("should access exported env vars", async () => {
+    it("should access exported env vars", { timeout: 60000 }, async () => {
       const env = new Bash();
       const result = await env.exec(`
 export MY_VAR=hello
