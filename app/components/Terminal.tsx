@@ -32,8 +32,10 @@ function getTheme(isDark: boolean) {
 
 export default function TerminalComponent({
   getAccessToken,
+  agentEndpoint,
 }: {
   getAccessToken: () => Promise<string | null>;
+  agentEndpoint?: string;
 }) {
   const terminalRef = useRef<HTMLDivElement>(null);
 
@@ -51,7 +53,7 @@ export default function TerminalComponent({
 
     // Create commands
     const { aboutCmd, installCmd, githubCmd } = createStaticCommands();
-    const agentCmd = createAgentCommand(term, getAccessToken);
+    const agentCmd = createAgentCommand(term, getAccessToken, agentEndpoint);
 
     // Files from DOM
     const files = {
@@ -114,7 +116,7 @@ export default function TerminalComponent({
       colorSchemeQuery.removeEventListener("change", onColorSchemeChange);
       term.dispose();
     };
-  }, [getAccessToken]);
+  }, [getAccessToken, agentEndpoint]);
 
   return (
     <div
