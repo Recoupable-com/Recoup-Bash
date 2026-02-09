@@ -20,6 +20,7 @@ function formatForTerminal(text: string): string {
 export function createAgentCommand(
   term: TerminalWriter,
   getAccessToken: () => Promise<string | null>,
+  agentEndpoint = "/api/agent",
 ) {
   const agentMessages: UIMessage[] = [];
   let messageIdCounter = 0;
@@ -62,7 +63,7 @@ export function createAgentCommand(
         };
       }
 
-      const response = await fetch("/api/agent", {
+      const response = await fetch(agentEndpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
