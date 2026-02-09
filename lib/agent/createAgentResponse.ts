@@ -1,6 +1,7 @@
 import { ToolLoopAgent, createAgentUIStreamResponse, stepCountIs } from "ai";
 import { createBashTool } from "bash-tool";
 import { Sandbox } from "@vercel/sandbox";
+import { after } from "next/server";
 import { SANDBOX_CWD, SYSTEM_INSTRUCTIONS, TOOL_PROMPT } from "./constants";
 import { saveSnapshot } from "@/lib/sandbox/saveSnapshot";
 
@@ -36,25 +37,32 @@ export async function createAgentResponse(
     const body = response.body;
     if (body) {
       const transform = new TransformStream();
-      body.pipeTo(transform.writable).finally(() => {
-        saveSnapshot(sandbox, bearerToken).finally(() =>
-          sandbox.stop().catch(() => {}),
-        );
+      const pipePromise = body.pipeTo(transform.writable);
+
+      // Use after() so Vercel keeps the function alive until
+      // the snapshot save completes after streaming ends.
+      after(async () => {
+        await pipePromise.catch(() => {});
+        await saveSnapshot(sandbox, bearerToken);
+        sandbox.stop().catch(() => {});
       });
+
       return new Response(transform.readable, {
         headers: response.headers,
         status: response.status,
       });
     }
 
-    saveSnapshot(sandbox, bearerToken).finally(() =>
-      sandbox.stop().catch(() => {}),
-    );
+    after(async () => {
+      await saveSnapshot(sandbox, bearerToken);
+      sandbox.stop().catch(() => {});
+    });
     return response;
   } catch (error) {
-    saveSnapshot(sandbox, bearerToken).finally(() =>
-      sandbox.stop().catch(() => {}),
-    );
+    after(async () => {
+      await saveSnapshot(sandbox, bearerToken);
+      sandbox.stop().catch(() => {});
+    });
     throw error;
   }
 }
