@@ -30,7 +30,11 @@ function getTheme(isDark: boolean) {
   };
 }
 
-export default function TerminalComponent() {
+export default function TerminalComponent({
+  getAccessToken,
+}: {
+  getAccessToken: () => Promise<string | null>;
+}) {
   const terminalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -47,7 +51,7 @@ export default function TerminalComponent() {
 
     // Create commands
     const { aboutCmd, installCmd, githubCmd } = createStaticCommands();
-    const agentCmd = createAgentCommand(term);
+    const agentCmd = createAgentCommand(term, getAccessToken);
 
     // Files from DOM
     const files = {
@@ -110,7 +114,7 @@ export default function TerminalComponent() {
       colorSchemeQuery.removeEventListener("change", onColorSchemeChange);
       term.dispose();
     };
-  }, []);
+  }, [getAccessToken]);
 
   return (
     <div
