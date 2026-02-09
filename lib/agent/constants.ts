@@ -1,3 +1,7 @@
+import { join } from "path";
+
+export const AGENT_DATA_DIR = join(process.cwd(), "app/api/agent/_agent-data");
+
 export const SANDBOX_CWD = "/vercel/sandbox";
 
 export const TOOL_PROMPT =
