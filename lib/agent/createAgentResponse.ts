@@ -2,6 +2,7 @@ import { ToolLoopAgent, createAgentUIStreamResponse, stepCountIs } from "ai";
 import { createBashTool } from "bash-tool";
 import { Sandbox } from "@vercel/sandbox";
 import { SANDBOX_CWD, SYSTEM_INSTRUCTIONS, TOOL_PROMPT } from "./constants";
+import { saveSnapshot } from "@/lib/sandbox/saveSnapshot";
 
 type CreateSandbox = (bearerToken: string) => Promise<Sandbox>;
 
@@ -24,12 +25,13 @@ export async function handleAgentRequest(
 
   const sandbox = await createSandbox(bearerToken);
 
-  return createAgentResponse(sandbox, messages);
+  return createAgentResponse(sandbox, messages, bearerToken);
 }
 
 async function createAgentResponse(
   sandbox: Sandbox,
   messages: unknown[],
+  bearerToken: string,
 ): Promise<Response> {
   try {
     const bashToolkit = await createBashTool({
@@ -59,7 +61,9 @@ async function createAgentResponse(
     if (body) {
       const transform = new TransformStream();
       body.pipeTo(transform.writable).finally(() => {
-        sandbox.stop().catch(() => {});
+        saveSnapshot(sandbox, bearerToken).finally(() =>
+          sandbox.stop().catch(() => {}),
+        );
       });
       return new Response(transform.readable, {
         headers: response.headers,
@@ -67,10 +71,14 @@ async function createAgentResponse(
       });
     }
 
-    sandbox.stop().catch(() => {});
+    saveSnapshot(sandbox, bearerToken).finally(() =>
+      sandbox.stop().catch(() => {}),
+    );
     return response;
   } catch (error) {
-    sandbox.stop().catch(() => {});
+    saveSnapshot(sandbox, bearerToken).finally(() =>
+      sandbox.stop().catch(() => {}),
+    );
     throw error;
   }
 }
