@@ -33,37 +33,23 @@ export async function createNewSandbox(
   bearerToken: string,
   agentDataDir: string,
 ): Promise<Sandbox> {
-  const t0 = Date.now();
   const snapshotId = await getSnapshotId(bearerToken);
-  console.log(`[timing] GET /api/sandboxes: ${Date.now() - t0}ms (snapshotId: ${snapshotId})`);
 
   if (snapshotId) {
     try {
-      const t1 = Date.now();
-      const sandbox = await Sandbox.create({
+      return await Sandbox.create({
         source: { type: "snapshot", snapshotId },
       });
-      console.log(`[timing] Sandbox.create (snapshot): ${Date.now() - t1}ms`);
-
-      const t2 = Date.now();
-      await sandbox.runCommand("true");
-      console.log(`[timing] sandbox warm-up: ${Date.now() - t2}ms`);
-
-      return sandbox;
     } catch (err) {
       console.warn("Snapshot sandbox creation failed, falling back:", err);
     }
   }
 
-  const t3 = Date.now();
   const sandbox = await Sandbox.create();
-  console.log(`[timing] Sandbox.create (fresh): ${Date.now() - t3}ms`);
 
   const files = readSourceFiles(agentDataDir);
   if (files.length > 0) {
-    const t4 = Date.now();
     await sandbox.writeFiles(files);
-    console.log(`[timing] writeFiles: ${Date.now() - t4}ms`);
   }
 
   return sandbox;
