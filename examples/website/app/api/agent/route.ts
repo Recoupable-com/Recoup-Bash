@@ -66,6 +66,14 @@ function readSourceFiles(
 }
 
 export async function POST(req: Request) {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return Response.json(
+      { error: "Unauthorized" },
+      { status: 401 },
+    );
+  }
+
   const { messages } = await req.json();
   const lastUserMessage = messages
     .filter((m: { role: string }) => m.role === "user")

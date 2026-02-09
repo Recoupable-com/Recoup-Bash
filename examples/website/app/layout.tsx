@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { GeistMono } from "geist/font/mono";
 import { Analytics } from "@vercel/analytics/next"
+import Providers from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -34,7 +35,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${GeistMono.variable} antialiased`}>
-        {children}
+        <Providers>{children}</Providers>
         <Analytics/>
       </body>
     </html>

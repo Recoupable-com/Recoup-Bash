@@ -11,6 +11,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@privy-io/react-auth": "^3.13.1",
     "@vercel/analytics": "^1.6.1",
     "@vercel/sandbox": "^1.4.1",
     "ai": "^6.0.66",

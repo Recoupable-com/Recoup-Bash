@@ -17,7 +17,10 @@ function formatForTerminal(text: string): string {
   return text.replace(/\t/g, "  ").replace(/\r?\n/g, "\r\n");
 }
 
-export function createAgentCommand(term: TerminalWriter) {
+export function createAgentCommand(
+  term: TerminalWriter,
+  getAccessToken: () => Promise<string | null>,
+) {
   const agentMessages: UIMessage[] = [];
   let messageIdCounter = 0;
 
@@ -49,9 +52,22 @@ export function createAgentCommand(term: TerminalWriter) {
     });
 
     try {
+      const token = await getAccessToken();
+      if (!token) {
+        agentMessages.pop();
+        return {
+          stdout: "",
+          stderr: "Error: Not authenticated. Please log in and try again.\n",
+          exitCode: 1,
+        };
+      }
+
       const response = await fetch("/api/agent", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ messages: agentMessages }),
       });
 
