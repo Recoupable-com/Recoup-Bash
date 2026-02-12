@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { RECOUP_API_URL } from "@/lib/consts";
+import { getSandboxes } from "@/lib/recoup-api/getSandboxes";
+import { setupSandbox } from "@/lib/recoup-api/setupSandbox";
 
 export function useSetupSandbox() {
   const { authenticated, getAccessToken } = usePrivy();
@@ -15,18 +16,11 @@ export function useSetupSandbox() {
         const token = await getAccessToken();
         if (!token) return;
 
-        const headers = { Authorization: `Bearer ${token}` };
-
-        const res = await fetch(`${RECOUP_API_URL}/api/sandboxes`, { headers });
-        if (!res.ok) return;
-
-        const data = await res.json();
+        const data = await getSandboxes(token);
+        if (!data) return;
         if (data.snapshot_id && data.github_repo) return;
 
-        fetch(`${RECOUP_API_URL}/api/sandboxes/setup`, {
-          method: "POST",
-          headers,
-        });
+        setupSandbox(token);
       } catch {
         // Silent — background provisioning only
       }
